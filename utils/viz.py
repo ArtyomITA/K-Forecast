@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.colors import hex_to_rgb
+
+from utils.theme import KT_GREY_STROKE, KT_ORANGE, KT_SUCCESS, PLOTLY_TEMPLATE
+
+
+@dataclass(frozen=True)
+class EventBand:
+    label: str
+    start: pd.Timestamp
+    end: pd.Timestamp
 
 REQUIRED_FORECAST_COLUMNS = ("item_id", "timestamp", "p10", "p50", "p90")
 
 
-def build_forecast_chart(actual: pd.DataFrame, forecast: pd.DataFrame, *, item_id: str) -> go.Figure:
+def build_forecast_chart(
+    actual: pd.DataFrame,
+    forecast: pd.DataFrame,
+    *,
+    item_id: str,
+    events: Sequence[EventBand] | None = None,
+) -> go.Figure:
     """Create a Plotly figure comparing actuals and forecast quantiles."""
 
     _validate_columns(actual, {"item_id", "timestamp", "target"}, name="actual")
@@ -32,8 +49,8 @@ def build_forecast_chart(actual: pd.DataFrame, forecast: pd.DataFrame, *, item_i
                 y=actual_series["target"],
                 mode="lines+markers",
                 name="Actual",
-                line=dict(color="#1f77b4", width=2),
-                marker=dict(size=5),
+                line=dict(color=KT_SUCCESS, width=2.5),
+                marker=dict(size=5, color=KT_SUCCESS),
             )
         )
 
@@ -44,7 +61,7 @@ def build_forecast_chart(actual: pd.DataFrame, forecast: pd.DataFrame, *, item_i
                 y=forecast_series["p50"],
                 mode="lines",
                 name="Forecast p50",
-                line=dict(color="#ff7f0e", width=2),
+                line=dict(color=KT_ORANGE, width=3),
             )
         )
         fig.add_trace(
@@ -52,7 +69,7 @@ def build_forecast_chart(actual: pd.DataFrame, forecast: pd.DataFrame, *, item_i
                 x=forecast_series["timestamp"],
                 y=forecast_series["p90"],
                 mode="lines",
-                line=dict(width=0),
+                line=dict(width=0, color="rgba(0,0,0,0)"),
                 showlegend=False,
                 hoverinfo="skip",
             )
@@ -63,21 +80,116 @@ def build_forecast_chart(actual: pd.DataFrame, forecast: pd.DataFrame, *, item_i
                 y=forecast_series["p10"],
                 mode="lines",
                 fill="tonexty",
-                fillcolor="rgba(255, 127, 14, 0.2)",
-                line=dict(width=0),
-                name="Int. p10-p90",
+                fillcolor=_hex_to_rgba(KT_ORANGE, 0.18),
+                line=dict(width=0, color="rgba(0,0,0,0)"),
+                name="Intervallo p10-p90",
                 hovertemplate="%{x|%Y-%m-%d}: %{y:.2f}<extra></extra>",
             )
         )
+
+    if events:
+        for event in events:
+            fig.add_vrect(
+                x0=event.start,
+                x1=event.end,
+                fillcolor=_hex_to_rgba(KT_ORANGE, 0.08),
+                line=dict(color=_hex_to_rgba(KT_ORANGE, 0.35), width=1),
+                layer="below",
+                annotation=dict(
+                    text=event.label,
+                    textangle=270,
+                    font=dict(color=KT_ORANGE, size=11),
+                    x=event.start,
+                    xshift=-6,
+                    y=1,
+                    yref="paper",
+                    showarrow=False,
+                ),
+            )
 
     fig.update_layout(
         title=f"Forecast vs Actual · {item_id}",
         xaxis_title="Data",
         yaxis_title="Valore",
-        template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        template=PLOTLY_TEMPLATE,
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.05,
+            xanchor="right",
+            x=1,
+            bgcolor="rgba(0,0,0,0)",
+        ),
     )
 
+    fig.update_xaxes(
+        rangeselector=dict(
+            bgcolor=_hex_to_rgba(KT_GREY_STROKE, 0.35),
+            activecolor=_hex_to_rgba(KT_ORANGE, 0.5),
+            buttons=[
+                dict(count=7, label="7g", step="day", stepmode="backward"),
+                dict(count=30, label="30g", step="day", stepmode="backward"),
+                dict(count=90, label="90g", step="day", stepmode="backward"),
+                dict(step="all", label="All"),
+            ],
+        ),
+        rangeslider=dict(visible=True, bgcolor=_hex_to_rgba(KT_GREY_STROKE, 0.25)),
+        type="date",
+    )
+
+    return fig
+
+
+def build_comparison_chart(
+    actual: pd.DataFrame,
+    forecasts: dict[str, pd.DataFrame],
+    *,
+    item_id: str,
+) -> go.Figure:
+    """Render comparison of model medians for a single item."""
+
+    _validate_columns(actual, {"item_id", "timestamp", "target"}, name="actual")
+
+    fig = go.Figure()
+
+    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp")
+    if not actual_series.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=actual_series["timestamp"],
+                y=actual_series["target"],
+                mode="lines",
+                name="Actual",
+                line=dict(color=KT_GREY_STROKE, width=2, dash="dot"),
+            )
+        )
+
+    for model_name, forecast in forecasts.items():
+        _validate_columns(forecast, set(REQUIRED_FORECAST_COLUMNS), name=f"forecast[{model_name}]")
+        series = forecast[forecast["item_id"] == item_id].sort_values("timestamp")
+        if series.empty:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=series["timestamp"],
+                y=series["p50"],
+                mode="lines",
+                name=model_name,
+                line=dict(width=3),
+            )
+        )
+
+    fig.update_layout(
+        title=f"Confronto modelli · {item_id}",
+        xaxis_title="Data",
+        yaxis_title="Valore",
+        template=PLOTLY_TEMPLATE,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
+    )
+
+    fig.update_xaxes(type="date")
     return fig
 
 
@@ -156,3 +268,8 @@ def _pinball_loss(y_true: np.ndarray, y_quantile: np.ndarray, q: float) -> float
 def _coverage(y_true: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> float:
     within = (y_true >= lower) & (y_true <= upper)
     return float(np.mean(within) * 100)
+
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = hex_to_rgb(hex_color)
+    return f"rgba({r}, {g}, {b}, {alpha})"

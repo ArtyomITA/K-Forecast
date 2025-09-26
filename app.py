@@ -13,7 +13,9 @@ operate against a variety of inputs without surprising the user.
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import os
 import sys
 import time
@@ -21,6 +23,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -28,6 +31,353 @@ from models.ag_automl_model import fit_predict_agts
 from models.chronos_model import predict_chronos
 from models.deepar_model import train_and_predict_deepar
 from utils import viz
+from utils.viz import EventBand
+from utils.theme import (
+    KT_CARD_BG,
+    KT_DANGER,
+    KT_DARK_BG,
+    KT_GREY_STROKE,
+    KT_ORANGE,
+    KT_SUCCESS,
+    KT_TEXT,
+    KT_TEXT_MUTED,
+    KT_WARNING,
+    brand_badge,
+)
+
+st.set_page_config(page_title="K-Forecast", layout="wide")
+
+
+def inject_brand_css() -> None:
+    """Inject Keytech-inspired dark theme styles."""
+
+    font_stack = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+    css = """
+    <style>
+    :root {{
+        --kt-orange: {KT_ORANGE};
+        --kt-dark-bg: {KT_DARK_BG};
+        --kt-card-bg: {KT_CARD_BG};
+        --kt-text: {KT_TEXT};
+        --kt-text-muted: {KT_TEXT_MUTED};
+        --kt-grey-stroke: {KT_GREY_STROKE};
+        --kt-success: {KT_SUCCESS};
+        --kt-warning: {KT_WARNING};
+        --kt-danger: {KT_DANGER};
+    }}
+
+    html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {{
+        background-color: var(--kt-dark-bg);
+        color: var(--kt-text);
+        font-family: {font_stack};
+    }}
+
+    .stApp {{
+        background: var(--kt-dark-bg) !important;
+    }}
+
+    div.block-container {{
+        padding-top: 2.5rem;
+        padding-bottom: 3rem;
+    }}
+
+    [data-testid="stExpander"] {{
+        background: var(--kt-card-bg);
+        border: 1px solid var(--kt-grey-stroke);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+    }}
+
+    [data-testid="stExpander"] details {{
+        padding: 0.2rem 1rem 1rem 1rem;
+    }}
+
+    [data-testid="stExpander"] summary {{
+        font-weight: 600;
+        color: var(--kt-text);
+    }}
+
+    [data-testid="stSidebar"] > div {{
+        background: var(--kt-card-bg);
+        border-right: 1px solid var(--kt-grey-stroke);
+    }}
+
+    .kt-card, .stMarkdown, .stRadio, .stFileUploader, .stAlert {{
+        background: var(--kt-card-bg) !important;
+        border-radius: 16px;
+        border: 1px solid var(--kt-grey-stroke);
+        padding: 0.75rem 1rem;
+    }}
+
+    div[data-testid="stVerticalBlock"] > div > div:has(.stButton) {{
+        margin-top: 1.5rem;
+    }}
+
+    .stButton > button {{
+        background: var(--kt-orange);
+        border-radius: 999px;
+        border: 1px solid var(--kt-orange);
+        color: #050608;
+        font-weight: 600;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }}
+
+    .stButton > button:hover {{
+        transform: translateY(-1px);
+        box-shadow: 0 8px 20px rgba(255, 122, 0, 0.25);
+    }}
+
+    .stButton > button:focus {{
+        outline: 2px solid rgba(255, 122, 0, 0.6);
+        outline-offset: 2px;
+    }}
+
+    .stRadio > label {{
+        color: var(--kt-text-muted) !important;
+    }}
+
+    textarea, input[type="text"], input[type="number"], .stTextInput > div > div > input {{
+        background: var(--kt-card-bg);
+        color: var(--kt-text);
+        border: 1px solid var(--kt-grey-stroke);
+    }}
+
+    .stDataFrame {{
+        background: var(--kt-card-bg) !important;
+        border-radius: 12px;
+        border: 1px solid var(--kt-grey-stroke);
+        overflow: hidden;
+    }}
+
+    .stDataFrame thead tr {{
+        background: rgba(42, 48, 64, 0.9);
+    }}
+
+    .stDataFrame tbody tr:nth-child(odd) {{
+        background: rgba(28, 33, 46, 0.8);
+    }}
+
+    .stDataFrame tbody tr:nth-child(even) {{
+        background: rgba(17, 21, 31, 0.8);
+    }}
+
+    .stDataFrame table {{
+        color: var(--kt-text);
+    }}
+
+    .kt-metric-table {{
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+        background: var(--kt-card-bg);
+        border: 1px solid var(--kt-grey-stroke);
+        border-radius: 12px;
+        overflow: hidden;
+    }}
+
+    .kt-metric-table thead th {{
+        background: rgba(42, 48, 64, 0.9);
+        color: var(--kt-text);
+        padding: 0.65rem 1rem;
+        text-align: left;
+        font-size: 0.85rem;
+        letter-spacing: 0.02em;
+    }}
+
+    .kt-metric-table tbody td {{
+        padding: 0.6rem 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.04);
+        text-align: right;
+        color: var(--kt-text);
+    }}
+
+    .kt-metric-table tbody tr:nth-child(odd) {{
+        background: rgba(28, 33, 46, 0.55);
+    }}
+
+    .kt-metric-table tbody tr:nth-child(even) {{
+        background: rgba(17, 21, 31, 0.55);
+    }}
+
+    .kt-metric-table tbody td:first-child,
+    .kt-metric-table thead th:first-child {{
+        text-align: left;
+    }}
+
+    .kt-metric-table .kt-badge {{
+        font-size: 0.75rem;
+        padding: 0.3rem 0.75rem;
+    }}
+
+    .kt-metric-table .kt-highlight {{
+        background: rgba(34, 197, 94, 0.18);
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
+        font-weight: 600;
+        display: inline-block;
+        color: var(--kt-text);
+    }}
+
+    .kt-callout {{
+        margin-top: 1rem;
+        margin-bottom: 1.5rem;
+        padding: 1rem 1.25rem;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: linear-gradient(120deg, rgba(255, 122, 0, 0.08), rgba(17, 21, 31, 0.6));
+        color: var(--kt-text);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+    }}
+
+    .kt-callout h4 {{
+        margin: 0 0 0.5rem 0;
+        font-size: 1rem;
+        color: var(--kt-text);
+    }}
+
+    .kt-callout ul {{
+        padding-left: 1.2rem;
+        margin: 0;
+        display: grid;
+        gap: 0.35rem;
+    }}
+
+    .kt-callout strong {{
+        color: {KT_ORANGE};
+    }}
+
+    .kt-info {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.25em;
+        height: 1.25em;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        font-size: 0.65rem;
+        color: {KT_TEXT};
+        cursor: help;
+        margin-left: 0.4rem;
+    }}
+
+    .kt-chip-row {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin: 0.5rem 0 1rem;
+    }}
+
+    .kt-chip {{
+        background: rgba(42, 48, 64, 0.75);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 999px;
+        padding: 0.4rem 0.9rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        display: inline-flex;
+        gap: 0.35rem;
+        align-items: center;
+    }}
+
+    .kt-chip--warning {{
+        border-color: rgba(245, 158, 11, 0.45);
+        color: {KT_WARNING};
+    }}
+
+    .kt-chip--danger {{
+        border-color: rgba(239, 68, 68, 0.45);
+        color: {KT_DANGER};
+    }}
+
+    .kt-chip--success {{
+        border-color: rgba(34, 197, 94, 0.45);
+        color: {KT_SUCCESS};
+    }}
+
+    .kt-header-badges {{
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.5rem;
+        width: 100%;
+    }}
+
+    .kt-header-badges__row {{
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }}
+
+    .kt-action-row {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 1rem;
+    }}
+
+    .kt-copy {{
+        background: var(--kt-orange);
+        border: none;
+        color: #050608;
+        font-weight: 600;
+        border-radius: 999px;
+        padding: 0.55rem 1.25rem;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }}
+
+    .kt-copy:hover {{
+        transform: translateY(-1px);
+        box-shadow: 0 8px 20px rgba(255, 122, 0, 0.25);
+    }}
+
+    .kt-download-disabled {{
+        opacity: 0.5;
+        cursor: not-allowed;
+    }}
+
+    .kt-badge {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.8rem;
+        font-size: 0.8rem;
+        line-height: 1;
+        border-radius: 999px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 600;
+    }}
+
+    .kt-subheader {{
+        color: var(--kt-text-muted);
+    }}
+
+    .stAlert {{
+        border-left: 3px solid var(--kt-warning);
+    }}
+    </style>
+    """
+
+    st.markdown(
+        css.format(
+            KT_ORANGE=KT_ORANGE,
+            KT_DARK_BG=KT_DARK_BG,
+            KT_CARD_BG=KT_CARD_BG,
+            KT_TEXT=KT_TEXT,
+            KT_TEXT_MUTED=KT_TEXT_MUTED,
+            KT_GREY_STROKE=KT_GREY_STROKE,
+            KT_SUCCESS=KT_SUCCESS,
+            KT_WARNING=KT_WARNING,
+            KT_DANGER=KT_DANGER,
+            font_stack=font_stack,
+        ),
+        unsafe_allow_html=True,
+    )
 
 # ---------------------------------------------------------------------------
 # Application-wide constants
@@ -100,8 +450,78 @@ def render_sidebar() -> dict[str, Any]:
 def render_main_area(options: dict[str, Any]) -> None:
     """Compose the main panel with dataset selection and outputs."""
 
-    st.title("K-Forecast · Forecast demo")
-    st.caption("Scegli l'origine dei dati, seleziona il modello e lancia il forecast.")
+    with st.expander("Cos'è K-Forecast?"):
+        st.markdown(
+            "\n".join(
+                [
+                    "- Prevede i flussi di cassa a 7/30/90g con incertezza (p10–p90).",
+                    "- Funziona su più serie (conti/cliente) e confronta 3 modelli.",
+                    "- Esporta CSV e mostra metriche di qualità.",
+                ]
+            )
+        )
+        st.markdown(brand_badge(f"Modello: {options['model_display']}"), unsafe_allow_html=True)
+
+    header_left, header_right = st.columns([3, 2], gap="large")
+
+    with header_left:
+        st.title("K-Forecast · Forecast demo")
+        st.caption("Scegli l'origine dei dati, seleziona il modello e lancia il forecast.")
+
+    with header_right:
+        status_badges = " ".join(
+            [
+                brand_badge(f"Modello: {options['model_display']}", tone="accent"),
+                brand_badge(f"Orizzonte: {options['horizon']}g", tone="warning"),
+            ]
+        )
+        st.markdown(
+            (
+                "<div class='kt-header-badges'>"
+                f"{brand_badge('Keytech AI', tone='accent')}"
+                f"<div class='kt-header-badges__row'>{status_badges}</div>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        """
+        <div class='kt-callout'>
+            <h4>Come leggere il grafico</h4>
+            <ul>
+                <li><strong>Forecast p50</strong> = curva attesa</li>
+                <li><strong>Intervallo p10–p90</strong> = fascia d'incertezza</li>
+                <li><strong>Actual</strong> = storico reale</li>
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tab_chronos, tab_deepar, tab_automl = st.tabs(["Chronos-Bolt", "DeepAR", "AutoML"])
+
+    with tab_chronos:
+        st.markdown("**Pro:** zero-shot veloce senza training locale.")
+        st.markdown("**Contro:** meno personalizzato sul singolo cliente.")
+        st.markdown("**Dati richiesti:** serie giornaliere con item_id, timestamp, target.")
+        st.markdown("**Output:** previsioni p10/p50/p90 sull'orizzonte scelto.")
+
+    with tab_deepar:
+        st.markdown("**Pro:** apprende stagionalità e pattern specifici cliente.")
+        st.markdown("**Contro:** richiede fase di training e tempo maggiore.")
+        st.markdown("**Dati richiesti:** storico denso per ogni serie, frequenza giornaliera.")
+        st.markdown("**Output:** probabilità p10/p50/p90 allineate al modello sequenziale.")
+
+    with tab_automl:
+        st.markdown("**Pro:** prova più famiglie di modelli e combina gli ensemble.")
+        st.markdown("**Contro:** tempi di esecuzione più alti del zero-shot.")
+        st.markdown("**Dati richiesti:** tabella long con item_id, timestamp, target opzionali covariate.")
+        st.markdown("**Output:** forecast aggregato con quantili e leaderboard interno.")
+
+    with st.expander("Assunzioni & limiti"):
+        st.markdown("**Assunzioni:** {{ASSUNZIONI_TXT}}")
+        st.markdown("**Limiti:** {{LIMITI_TXT}}")
 
     data_choice = st.radio("Sorgente dati", ("Usa mock data", "Carica CSV"), horizontal=True)
     uploaded_file = None
@@ -157,6 +577,7 @@ def render_main_area(options: dict[str, Any]) -> None:
 def main() -> None:
     """Streamlit entrypoint."""
 
+    inject_brand_css()
     options = render_sidebar()
     configure_logging(options["debug_mode"])
     LOGGER.info("Modello selezionato: %s | Horizon=%d", options["model_display"], options["horizon"])
@@ -180,43 +601,66 @@ def handle_forecast(
 ) -> None:
     """Run the selected model and display outputs."""
 
-    start_time = time.perf_counter()
     train_df, holdout_df = _train_holdout_split(dataset_df, horizon)
     LOGGER.debug("Train shape=%s | Holdout shape=%s", train_df.shape, holdout_df.shape)
 
-    try:
-        if model_key == "chronos":
-            forecast_df = predict_chronos(train_df, horizon, freq, zero_shot=True, do_finetune=False, logger=LOGGER)
-        elif model_key == "deepar":
-            forecast_df, training_metrics = train_and_predict_deepar(dataset_df, horizon, freq, **DEEPAR_DEFAULTS)
-            LOGGER.debug("DeepAR training metrics=%s", training_metrics)
-        else:  # automl
-            forecast_df, automl_metrics = fit_predict_agts(dataset_df, horizon, freq, **AUTOML_DEFAULTS)
-            LOGGER.debug("AutoML leaderboard metrics=%s", automl_metrics)
-    except Exception as exc:  # pragma: no cover - Streamlit UI path
-        LOGGER.exception("Forecast %s failed: %s", model_key, exc)
-        st.error(
-            "Si è verificato un errore durante l'esecuzione del modello {}. "
-            "Dettagli: {}".format(model_key, exc)
-        )
+    run_order = [model_key] + [key for key in MODEL_KEY_MAP.values() if key != model_key]
+    comparison_payload: dict[str, dict[str, Any]] = {}
+    quantile_messages: dict[str, str] = {}
+
+    for key in run_order:
+        start_time = time.perf_counter()
+        try:
+            if key == "chronos":
+                forecast_raw = predict_chronos(train_df, horizon, freq, zero_shot=True, do_finetune=False, logger=LOGGER)
+            elif key == "deepar":
+                forecast_raw, _training_metrics = train_and_predict_deepar(dataset_df, horizon, freq, **DEEPAR_DEFAULTS)
+            else:  # automl
+                forecast_raw, _automl_metrics = fit_predict_agts(dataset_df, horizon, freq, **AUTOML_DEFAULTS)
+        except Exception as exc:  # pragma: no cover - Streamlit UI path
+            LOGGER.exception("Forecast %s failed: %s", key, exc)
+            if key == model_key:
+                st.error(
+                    "Si è verificato un errore durante l'esecuzione del modello {}. "
+                    "Dettagli: {}".format(key, exc)
+                )
+                return
+            else:
+                comparison_payload[key] = {"forecast": pd.DataFrame(), "duration": None}
+                continue
+
+        duration = time.perf_counter() - start_time
+        forecast_df_sanitized = _sanitize_forecast_frame(forecast_raw)
+        forecast_df_sanitized, quantile_msg = _ensure_quantiles(forecast_df_sanitized)
+        if quantile_msg:
+            quantile_messages[key] = quantile_msg
+
+        LOGGER.info("[INFO][MODEL] %s: durata_inferenza=%.2fs, quantili=[p10,p50,p90]", key, duration)
+
+        comparison_payload[key] = {
+            "forecast": forecast_df_sanitized,
+            "duration": duration,
+        }
+
+    primary = comparison_payload.get(model_key)
+    if not primary:
+        st.error("Risultato del modello selezionato non disponibile.")
         return
 
-    duration = time.perf_counter() - start_time
-    LOGGER.info("Forecast %s completato in %.2fs", model_key, duration)
-
-    forecast_df = _sanitize_forecast_frame(forecast_df)
-    forecast_df, quantile_msg = _ensure_quantiles(forecast_df)
-    if quantile_msg is not None:
-        st.info(quantile_msg)
+    if message := quantile_messages.get(model_key):
+        st.info(message)
 
     _render_outputs(
         chart_placeholder=chart_placeholder,
         metrics_placeholder=metrics_placeholder,
         download_placeholder=download_placeholder,
-        forecast_df=forecast_df,
+        forecast_df=primary["forecast"],
         train_df=train_df,
         holdout_df=holdout_df,
         model_label=model_key,
+        comparison_payload=comparison_payload,
+        quantile_messages=quantile_messages,
+        horizon=horizon,
     )
 
 
@@ -340,6 +784,9 @@ def _render_outputs(
     train_df: pd.DataFrame,
     holdout_df: pd.DataFrame,
     model_label: str,
+    comparison_payload: dict[str, dict[str, Any]],
+    quantile_messages: dict[str, str],
+    horizon: int,
 ) -> None:
     all_actual = pd.concat([train_df, holdout_df], ignore_index=True) if not train_df.empty else holdout_df
 
@@ -348,27 +795,427 @@ def _render_outputs(
         st.warning("Nessuna serie disponibile nelle previsioni.")
         return
 
+    display_name_by_key = {value: key for key, value in MODEL_KEY_MAP.items()}
+
     selected_item = cast(
         str,
         st.selectbox("Serie da visualizzare", options=available_items, key=f"series_{model_label}"),
     )
-    chart = viz.build_forecast_chart(all_actual, forecast_df, item_id=selected_item)
-    chart_placeholder.plotly_chart(chart, use_container_width=True)
+    LOGGER.info("[INFO][UI] Render grafico: item=%s, horizon=%d", selected_item, horizon)
 
-    if holdout_df.empty:
-        metrics_placeholder.info("Nessun holdout disponibile per il calcolo delle metriche.")
-    else:
-        metrics = viz.compute_metrics(holdout_df, forecast_df)
-        metrics_placeholder.dataframe(metrics, use_container_width=True)
+    events = _generate_event_bands(all_actual, forecast_df, selected_item)
+    main_fig = viz.build_forecast_chart(all_actual, forecast_df, item_id=selected_item, events=events)
+
+    metrics = viz.compute_metrics(holdout_df, forecast_df) if not holdout_df.empty else pd.DataFrame()
+    metrics_display = metrics.rename(
+        columns={
+            "item_id": "Serie",
+            "Coverage[p10,p90]": "Copertura p10–p90",
+        }
+    ) if not metrics.empty else pd.DataFrame()
+
+    selected_metrics = (
+        metrics_display[metrics_display["Serie"] == selected_item].iloc[0]
+        if not metrics_display.empty and selected_item in metrics_display["Serie"].values
+        else None
+    )
+
+    if selected_metrics is not None:
+        LOGGER.info(
+            "[INFO][METRICS] MAPE=%.3f sMAPE=%.3f Coverage=%.2f",
+            selected_metrics["MAPE"],
+            selected_metrics["sMAPE"],
+            selected_metrics["Copertura p10–p90"],
+        )
+
+    chips_html = _render_kpi_chips(
+        mape=float(selected_metrics["MAPE"]) if selected_metrics is not None else float("nan"),
+        coverage=float(selected_metrics["Copertura p10–p90"]) if selected_metrics is not None else float("nan"),
+        horizon=horizon,
+        series_count=len(available_items),
+    )
+
+    with chart_placeholder.container():
+        st.markdown(chips_html, unsafe_allow_html=True)
+        st.plotly_chart(main_fig, use_container_width=True)
+
+    tab_single, tab_compare = st.tabs(["Singolo modello", "Confronto modelli"])
+
+    with tab_single:
+        _render_single_model_section(
+            metrics_placeholder=metrics_placeholder,
+            download_placeholder=download_placeholder,
+            forecast_df=forecast_df,
+            metrics_display=metrics_display,
+            model_label=model_label,
+            chart_fig=main_fig,
+            selected_item=selected_item,
+            coverage=float(selected_metrics["Copertura p10–p90"]) if selected_metrics is not None else float("nan"),
+            mape=float(selected_metrics["MAPE"]) if selected_metrics is not None else float("nan"),
+        )
+
+    with tab_compare:
+        _render_comparison_section(
+            all_actual=all_actual,
+            comparison_payload=comparison_payload,
+            holdout_df=holdout_df,
+            selected_item=selected_item,
+            quantile_messages=quantile_messages,
+            display_name_by_key=display_name_by_key,
+        )
+
+
+def _render_kpi_chips(*, mape: float, coverage: float, horizon: int, series_count: int) -> str:
+    def _chip(label: str, value: str, tone: str | None = None) -> str:
+        classes = ["kt-chip"]
+        if tone:
+            classes.append(f"kt-chip--{tone}")
+        return f"<span class='{' '.join(classes)}'><span>{label}</span><span>{value}</span></span>"
+
+    def _tone_from_mape(value: float) -> str | None:
+        if math.isnan(value):
+            return None
+        if value <= 10:
+            return "success"
+        if value <= 20:
+            return "warning"
+        return "danger"
+
+    def _tone_from_coverage(value: float) -> str | None:
+        if math.isnan(value):
+            return None
+        if value >= 85:
+            return "success"
+        if value >= 70:
+            return "warning"
+        return "danger"
+
+    mape_display = "n/d" if math.isnan(mape) else f"{mape:.1f}%"
+    coverage_display = "n/d" if math.isnan(coverage) else f"{coverage:.1f}%"
+
+    chips = [
+        _chip("MAPE", mape_display, _tone_from_mape(mape)),
+        _chip("Coverage", coverage_display, _tone_from_coverage(coverage)),
+        _chip("Orizzonte", f"{horizon}g"),
+        _chip("Serie", str(series_count)),
+    ]
+
+    return f"<div class='kt-chip-row'>{''.join(chips)}</div>"
+
+
+def _render_single_model_section(
+    *,
+    metrics_placeholder,
+    download_placeholder,
+    forecast_df: pd.DataFrame,
+    metrics_display: pd.DataFrame,
+    model_label: str,
+    chart_fig,
+    selected_item: str,
+    coverage: float,
+    mape: float,
+) -> None:
+    with metrics_placeholder.container():
+        if metrics_display.empty:
+            st.info("Nessun holdout disponibile per il calcolo delle metriche.")
+        else:
+            baseline = float(metrics_display["MAPE"].median(skipna=True)) if not metrics_display.empty else float("nan")
+
+            def _info_header(label: str, tooltip: str) -> str:
+                return f"{label} <span class='kt-info' title=\"{tooltip}\">ℹ</span>"
+
+            def _format_percent(value: float, decimals: int = 2) -> str:
+                if pd.isna(value):
+                    return "—"
+                return f"{value:.{decimals}f}%"
+
+            def _format_pinball(value: float) -> str:
+                if pd.isna(value):
+                    return "—"
+                return f"{value:.3f}"
+
+            def _trend_badge(value: float) -> str:
+                if pd.isna(value) or pd.isna(baseline) or baseline <= 0:
+                    return brand_badge("≈ baseline", tone="warning")
+                delta = (value - baseline) / baseline * 100
+                if abs(delta) < 1.5:
+                    return brand_badge("≈ baseline", tone="warning")
+                if delta < 0:
+                    return brand_badge(f"▼ {abs(delta):.1f}%", tone="success")
+                return brand_badge(f"▲ {delta:.1f}%", tone="danger")
+
+            def _coverage_badge(value: float) -> str:
+                if pd.isna(value):
+                    return brand_badge("n/d", tone="warning")
+                if value >= 85:
+                    tone = "success"
+                elif value >= 70:
+                    tone = "warning"
+                else:
+                    tone = "danger"
+                return brand_badge(f"{value:.1f}%", tone=tone)
+
+            table_rows = []
+            for _, row in metrics_display.iterrows():
+                table_rows.append(
+                    {
+                        "Serie": row["Serie"],
+                        "MAPE": _format_percent(row["MAPE"]),
+                        "Trend": _trend_badge(row["MAPE"]),
+                        "sMAPE": _format_percent(row["sMAPE"]),
+                        "Pinball@0.1": _format_pinball(row["Pinball@0.1"]),
+                        "Pinball@0.9": _format_pinball(row["Pinball@0.9"]),
+                        "Copertura p10–p90": _coverage_badge(row["Copertura p10–p90"]),
+                    }
+                )
+
+            metrics_table = pd.DataFrame(table_rows, columns=[
+                "Serie",
+                "MAPE",
+                "Trend",
+                "sMAPE",
+                "Pinball@0.1",
+                "Pinball@0.9",
+                "Copertura p10–p90",
+            ])
+            metrics_table.columns = [
+                "Serie",
+                _info_header("MAPE", "Errore % medio (più basso = meglio)"),
+                "Trend",
+                _info_header("sMAPE", "Versione simmetrica della MAPE"),
+                _info_header("Pinball@0.1", "Accuratezza sui quantili (bassa = meglio)"),
+                _info_header("Pinball@0.9", "Accuratezza sui quantili (bassa = meglio)"),
+                _info_header("Copertura p10–p90", "% punti reali dentro la banda"),
+            ]
+            metrics_html = metrics_table.to_html(index=False, escape=False, classes="kt-metric-table")
+            st.markdown(metrics_html, unsafe_allow_html=True)
 
     csv_buffer = StringIO()
     forecast_df.to_csv(csv_buffer, index=False)
-    download_placeholder.download_button(
-        label="Scarica CSV previsioni",
-        data=csv_buffer.getvalue(),
-        file_name=f"forecast_{model_label}.csv",
-        mime="text/csv",
+
+    png_bytes: bytes | None = None
+    png_error: str | None = None
+    try:
+        png_bytes = chart_fig.to_image(format="png", width=1280, height=640, scale=2)
+    except Exception as exc:  # pragma: no cover - optional feature
+        png_error = str(exc)
+
+    insight_text = _build_insight_text(
+        item_id=selected_item,
+        mape=mape,
+        coverage=coverage,
+        peak_date=_estimate_risk_peak(forecast_df, selected_item),
     )
+
+    escaped_insight = json.dumps(insight_text)
+    copy_button = f"<button class='kt-copy' onclick=\"navigator.clipboard.writeText({escaped_insight})\">Copia insight</button>"
+
+    with download_placeholder.container():
+        col_csv, col_png, col_copy = st.columns([1, 1, 1])
+        with col_csv:
+            st.download_button(
+                label="Scarica CSV previsioni",
+                data=csv_buffer.getvalue(),
+                file_name=f"forecast_{model_label}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        with col_png:
+            if png_bytes is not None:
+                st.download_button(
+                    label="Scarica PNG grafico",
+                    data=png_bytes,
+                    file_name=f"forecast_{model_label}.png",
+                    mime="image/png",
+                    use_container_width=True,
+                )
+            else:
+                st.markdown(
+                    "<button class='kt-copy kt-download-disabled' disabled>Scarica PNG grafico</button>",
+                    unsafe_allow_html=True,
+                )
+                if png_error:
+                    st.caption("Installare `kaleido` per abilitare l'esportazione PNG.")
+        with col_copy:
+            st.markdown(copy_button, unsafe_allow_html=True)
+
+
+def _render_comparison_section(
+    *,
+    all_actual: pd.DataFrame,
+    comparison_payload: dict[str, dict[str, Any]],
+    holdout_df: pd.DataFrame,
+    selected_item: str,
+    quantile_messages: dict[str, str],
+    display_name_by_key: dict[str, str],
+) -> None:
+    forecasts_for_chart: dict[str, pd.DataFrame] = {}
+    for key, payload in comparison_payload.items():
+        forecast = payload.get("forecast")
+        if forecast is None or forecast.empty:
+            continue
+        display_name = display_name_by_key.get(key, key.title())
+        forecasts_for_chart[display_name] = forecast
+
+    if not forecasts_for_chart:
+        st.info("Nessun forecast disponibile per il confronto.")
+        return
+
+    comparison_fig = viz.build_comparison_chart(all_actual, forecasts_for_chart, item_id=selected_item)
+    st.plotly_chart(comparison_fig, use_container_width=True)
+
+    missing_messages = [
+        f"{display_name_by_key.get(key, key.title())}: {msg}"
+        for key, msg in quantile_messages.items()
+        if key in comparison_payload and (comparison_payload[key].get("forecast") is not None)
+    ]
+    if missing_messages:
+        st.caption(" · ".join(missing_messages))
+
+    if holdout_df.empty:
+        st.info("Nessun holdout disponibile per confrontare le metriche.")
+        return
+
+    comparison_rows: list[dict[str, Any]] = []
+    metric_values: dict[str, list[float]] = {
+        "MAPE": [],
+        "sMAPE": [],
+        "Pinball@0.1": [],
+        "Pinball@0.9": [],
+        "Coverage[p10,p90]": [],
+    }
+
+    for key, payload in comparison_payload.items():
+        forecast = payload.get("forecast")
+        duration = payload.get("duration")
+        if forecast is None or forecast.empty:
+            continue
+
+        model_metrics = viz.compute_metrics(holdout_df, forecast)
+        row = model_metrics[model_metrics["item_id"] == selected_item]
+        if row.empty:
+            row = model_metrics.mean(numeric_only=True)
+            if isinstance(row, pd.Series):
+                metrics_dict = row.to_dict()
+            else:
+                continue
+        else:
+            metrics_dict = row.iloc[0].to_dict()
+
+        display_name = display_name_by_key.get(key, key.title())
+        comparison_rows.append(
+            {
+                "Modello": display_name,
+                "MAPE": metrics_dict.get("MAPE", float("nan")),
+                "sMAPE": metrics_dict.get("sMAPE", float("nan")),
+                "Pinball@0.1": metrics_dict.get("Pinball@0.1", float("nan")),
+                "Pinball@0.9": metrics_dict.get("Pinball@0.9", float("nan")),
+                "Coverage": metrics_dict.get("Coverage[p10,p90]", float("nan")),
+                "Durata (s)": duration,
+            }
+        )
+
+        for metric_name in metric_values.keys():
+            metric_values[metric_name].append(metrics_dict.get(metric_name, float("nan")))
+
+    if not comparison_rows:
+        st.info("Impossibile calcolare le metriche di confronto.")
+        return
+
+    best_low = {
+        key: np.nanmin(values) if values else float("nan")
+        for key, values in metric_values.items()
+        if key != "Coverage[p10,p90]"
+    }
+    coverage_values = metric_values.get("Coverage[p10,p90]", [])
+    best_high = np.nanmax(coverage_values) if coverage_values else float("nan")
+
+    table_rows = []
+    for row in comparison_rows:
+        formatted = {"Modello": row["Modello"]}
+        for metric in ("MAPE", "sMAPE", "Pinball@0.1", "Pinball@0.9"):
+            value = row[metric]
+            display = "n/d" if pd.isna(value) else f"{value:.2f}%" if metric.endswith("MAPE") else f"{value:.3f}"
+            if not pd.isna(value) and math.isclose(value, best_low.get(metric, float("nan")), rel_tol=1e-9, abs_tol=1e-6):
+                display = f"<span class='kt-highlight'>{display}</span>"
+            formatted[metric] = display
+        coverage_value = row["Coverage"]
+        coverage_display = "n/d" if pd.isna(coverage_value) else f"{coverage_value:.2f}%"
+        if not (pd.isna(coverage_value) or math.isnan(best_high)) and math.isclose(
+            coverage_value,
+            best_high,
+            rel_tol=1e-9,
+            abs_tol=1e-6,
+        ):
+            coverage_display = f"<span class='kt-highlight'>{coverage_display}</span>"
+        formatted["Coverage"] = coverage_display
+        duration_value = row["Durata (s)"]
+        formatted["Durata (s)"] = "n/d" if duration_value is None else f"{duration_value:.2f}"
+        table_rows.append(formatted)
+
+    comparison_table = pd.DataFrame(table_rows, columns=[
+        "Modello",
+        "MAPE",
+        "sMAPE",
+        "Pinball@0.1",
+        "Pinball@0.9",
+        "Coverage",
+        "Durata (s)",
+    ])
+    table_html = comparison_table.to_html(index=False, escape=False, classes="kt-metric-table")
+    st.markdown(table_html, unsafe_allow_html=True)
+
+
+def _generate_event_bands(all_actual: pd.DataFrame, forecast_df: pd.DataFrame, item_id: str):
+    labels = ["STIPENDI", "IVA", "Ritardo incassi"]
+    actual_dates = (
+        all_actual[all_actual["item_id"] == item_id]["timestamp"]
+        if not all_actual.empty
+        else pd.Series(dtype="datetime64[ns]")
+    )
+    forecast_dates = forecast_df[forecast_df["item_id"] == item_id]["timestamp"]
+    combined = pd.concat([actual_dates, forecast_dates], ignore_index=True).dropna().sort_values().reset_index(drop=True)
+    if combined.empty:
+        return []
+
+    unique_dates = combined.drop_duplicates()
+    count = min(len(labels), len(unique_dates))
+    if count == 0:
+        return []
+
+    indices = np.linspace(0, len(unique_dates) - 1, count, dtype=int)
+    bands = []
+    for label, idx in zip(labels, indices):
+        ts = pd.to_datetime(unique_dates.iloc[idx])
+        bands.append(EventBand(label=label, start=ts - pd.Timedelta(hours=12), end=ts + pd.Timedelta(hours=12)))
+    return bands
+
+
+def _estimate_risk_peak(forecast_df: pd.DataFrame, item_id: str) -> str:
+    series = forecast_df[forecast_df["item_id"] == item_id].sort_values("timestamp")
+    if series.empty or {"p90", "p10", "timestamp"} - set(series.columns):
+        return "n/d"
+    band = series["p90"] - series["p10"]
+    if band.empty or band.isna().all():
+        return "n/d"
+    idx = band.idxmax()
+    if pd.isna(idx):
+        return "n/d"
+    ts = series.loc[idx, "timestamp"]
+    if pd.isna(ts):
+        return "n/d"
+    if not isinstance(ts, pd.Timestamp):
+        try:
+            ts = pd.Timestamp(cast(Any, ts))
+        except (TypeError, ValueError):
+            return "n/d"
+    return ts.strftime("%Y-%m-%d")
+
+
+def _build_insight_text(*, item_id: str, mape: float, coverage: float, peak_date: str) -> str:
+    mape_display = "n/d" if math.isnan(mape) else f"{mape:.1f}%"
+    coverage_display = "n/d" if math.isnan(coverage) else f"{coverage:.1f}%"
+    return f"Per {item_id}, MAPE={mape_display}, coverage={coverage_display}. Picco rischio cassa: {peak_date}."
 
 
 def _maybe_launch_streamlit() -> None:
