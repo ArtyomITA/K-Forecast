@@ -1,0 +1,17 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# AutoGluon model artifacts
+AutogluonModels/
+artifacts/
+
+# Streamlit and Python local state
+.streamlit/
+.env
+.venv/
+
+# OS metadata
+.DS_Store
+Thumbs.db

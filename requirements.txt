@@ -1,0 +1,12 @@
+# Minimum dependencies for the K-Forecast demo skeleton.
+# TODO: Pin exact versions once implementations are added.
+autogluon>=1.4.0
+gluonts[torch]>=0.14
+streamlit>=1.38.0
+pandas>=2.1.0
+numpy>=1.24.0
+plotly>=5.20.0
+matplotlib>=3.8.0
+pytorch-lightning>=2.2.0
+torch>=2.1.0
+transformers>=4.38.0
