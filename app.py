@@ -13,6 +13,7 @@ operate against a variety of inputs without surprising the user.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -392,6 +393,7 @@ HORIZON_OPTIONS = (7, 30, 90)
 DEFAULT_HORIZON = 30
 DEFAULT_FREQ = "D"
 MOCK_DATA_PATH = Path("data/mock_bank_flows.csv")
+SESSION_FORECAST_CACHE_KEY = "kt_forecast_cache"
 
 # Default hyper-parameters passed to model wrappers.
 DEEPAR_DEFAULTS: dict[str, Any] = {
@@ -604,48 +606,82 @@ def handle_forecast(
     train_df, holdout_df = _train_holdout_split(dataset_df, horizon)
     LOGGER.debug("Train shape=%s | Holdout shape=%s", train_df.shape, holdout_df.shape)
 
-    run_order = [model_key] + [key for key in MODEL_KEY_MAP.values() if key != model_key]
-    comparison_payload: dict[str, dict[str, Any]] = {}
-    quantile_messages: dict[str, str] = {}
+    run_signature = _compute_run_signature(dataset_df, horizon, freq)
+    cache: dict[str, dict[str, Any]] = cast(
+        dict[str, dict[str, Any]],
+        st.session_state.get(SESSION_FORECAST_CACHE_KEY, {}),
+    )
 
-    for key in run_order:
-        start_time = time.perf_counter()
-        try:
-            if key == "chronos":
-                forecast_raw = predict_chronos(train_df, horizon, freq, zero_shot=True, do_finetune=False, logger=LOGGER)
-            elif key == "deepar":
-                forecast_raw, _training_metrics = train_and_predict_deepar(dataset_df, horizon, freq, **DEEPAR_DEFAULTS)
-            else:  # automl
-                forecast_raw, _automl_metrics = fit_predict_agts(dataset_df, horizon, freq, **AUTOML_DEFAULTS)
-        except Exception as exc:  # pragma: no cover - Streamlit UI path
-            LOGGER.exception("Forecast %s failed: %s", key, exc)
-            if key == model_key:
-                st.error(
-                    "Si è verificato un errore durante l'esecuzione del modello {}. "
-                    "Dettagli: {}".format(key, exc)
-                )
-                return
-            else:
-                comparison_payload[key] = {"forecast": pd.DataFrame(), "duration": None}
-                continue
+    cache = {
+        key: value for key, value in cache.items() if value.get("signature") == run_signature
+    }
+    st.session_state[SESSION_FORECAST_CACHE_KEY] = cache
 
-        duration = time.perf_counter() - start_time
-        forecast_df_sanitized = _sanitize_forecast_frame(forecast_raw)
-        forecast_df_sanitized, quantile_msg = _ensure_quantiles(forecast_df_sanitized)
-        if quantile_msg:
-            quantile_messages[key] = quantile_msg
+    start_time = time.perf_counter()
+    try:
+        if model_key == "chronos":
+            forecast_raw = predict_chronos(
+                train_df,
+                horizon,
+                freq,
+                zero_shot=True,
+                do_finetune=False,
+                logger=LOGGER,
+            )
+        elif model_key == "deepar":
+            forecast_raw, _training_metrics = train_and_predict_deepar(
+                dataset_df,
+                horizon,
+                freq,
+                **DEEPAR_DEFAULTS,
+            )
+        else:  # automl
+            forecast_raw, _automl_metrics = fit_predict_agts(
+                dataset_df,
+                horizon,
+                freq,
+                **AUTOML_DEFAULTS,
+            )
+    except Exception as exc:  # pragma: no cover - Streamlit UI path
+        LOGGER.exception("Forecast %s failed: %s", model_key, exc)
+        st.error(
+            "Si è verificato un errore durante l'esecuzione del modello {}. "
+            "Dettagli: {}".format(model_key, exc)
+        )
+        return
 
-        LOGGER.info("[INFO][MODEL] %s: durata_inferenza=%.2fs, quantili=[p10,p50,p90]", key, duration)
+    duration = time.perf_counter() - start_time
+    forecast_df_sanitized = _sanitize_forecast_frame(forecast_raw)
+    forecast_df_sanitized, quantile_msg = _ensure_quantiles(forecast_df_sanitized)
 
-        comparison_payload[key] = {
-            "forecast": forecast_df_sanitized,
-            "duration": duration,
-        }
+    LOGGER.info("[INFO][MODEL] %s: durata_inferenza=%.2fs, quantili=[p10,p50,p90]", model_key, duration)
 
-    primary = comparison_payload.get(model_key)
+    cache[model_key] = {
+        "forecast": forecast_df_sanitized.copy(deep=True),
+        "duration": duration,
+        "quantile_message": quantile_msg,
+        "signature": run_signature,
+        "updated_at": time.time(),
+    }
+    st.session_state[SESSION_FORECAST_CACHE_KEY] = cache
+
+    primary = cache.get(model_key)
     if not primary:
         st.error("Risultato del modello selezionato non disponibile.")
         return
+
+    comparison_payload: dict[str, dict[str, Any]] = {
+        key: {
+            "forecast": entry.get("forecast", pd.DataFrame()),
+            "duration": entry.get("duration"),
+        }
+        for key, entry in cache.items()
+    }
+    quantile_messages: dict[str, str] = {
+        key: entry["quantile_message"]
+        for key, entry in cache.items()
+        if entry.get("quantile_message")
+    }
 
     if message := quantile_messages.get(model_key):
         st.info(message)
@@ -697,6 +733,18 @@ def _standardise_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df.sort_values(["item_id", "timestamp"], inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
+
+
+def _compute_run_signature(df: pd.DataFrame, horizon: int, freq: str) -> str:
+    if df.empty:
+        base = "empty"
+    else:
+        relevant = df[["item_id", "timestamp", "target"]].copy()
+        relevant["timestamp"] = pd.to_datetime(relevant["timestamp"], utc=False)
+        hash_series = pd.util.hash_pandas_object(relevant, index=False)
+        hashed_bytes = hash_series.to_numpy(dtype="uint64", copy=False).tobytes()
+        base = hashlib.sha1(hashed_bytes).hexdigest()
+    return f"{base}|h={horizon}|f={freq}"
 
 
 def _ensure_daily_frequency(df: pd.DataFrame, freq: str) -> tuple[pd.DataFrame, bool]:
@@ -1063,6 +1111,9 @@ def _render_comparison_section(
 
     comparison_fig = viz.build_comparison_chart(all_actual, forecasts_for_chart, item_id=selected_item)
     st.plotly_chart(comparison_fig, use_container_width=True)
+
+    if len(forecasts_for_chart) == 1:
+        st.info("Esegui un altro modello dal menu per popolare il confronto.")
 
     missing_messages = [
         f"{display_name_by_key.get(key, key.title())}: {msg}"

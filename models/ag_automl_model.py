@@ -17,14 +17,14 @@ ARTIFACT_DIR = Path("artifacts/agts")
 DEFAULT_ID_COL = "item_id"
 DEFAULT_TS_COL = "timestamp"
 DEFAULT_TARGET_COL = "target"
-DEFAULT_QUANTILES = ("0.1", "0.5", "0.9")
+DEFAULT_QUANTILE_LEVELS = (0.1, 0.5, 0.9)
 
 
 @dataclass
 class AutoGluonConfig:
     prediction_length: int
     freq: str
-    quantiles: Tuple[str, ...] = DEFAULT_QUANTILES
+    quantile_levels: Tuple[float, ...] = DEFAULT_QUANTILE_LEVELS
     presets: str = "medium_quality"
     time_limit: int | None = 120
     use_covariates: bool = False
@@ -64,7 +64,7 @@ def fit_predict_agts(
     predictor = TimeSeriesPredictor(
         prediction_length=cfg.prediction_length,
         freq=cfg.freq,
-        quantiles=[float(q) for q in cfg.quantiles],
+        quantile_levels=list(cfg.quantile_levels),
         path=ARTIFACT_DIR.as_posix(),
     )
 
@@ -116,10 +116,16 @@ def fit_predict_agts(
 
 
 def _build_config(prediction_length: int, freq: str, overrides: Mapping[str, Any]) -> AutoGluonConfig:
+    quantile_override = overrides.get("quantile_levels")
+    if quantile_override is None:
+        quantile_override = overrides.get("quantiles", DEFAULT_QUANTILE_LEVELS)
+
+    quantile_levels = tuple(float(q) for q in quantile_override)
+
     return AutoGluonConfig(
         prediction_length=prediction_length,
         freq=freq,
-        quantiles=tuple(overrides.get("quantiles", DEFAULT_QUANTILES)),
+        quantile_levels=quantile_levels,
         presets=str(overrides.get("presets", "medium_quality")),
         time_limit=overrides.get("time_limit"),
         use_covariates=bool(overrides.get("use_covariates", False)),

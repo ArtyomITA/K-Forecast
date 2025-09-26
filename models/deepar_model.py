@@ -10,14 +10,13 @@ from typing import Any, Dict, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
-import pytorch_lightning as pl
 from gluonts.dataset.common import ListDataset
 from gluonts.dataset.stat import calculate_dataset_statistics
 from gluonts.evaluation import make_evaluation_predictions
 from gluonts.evaluation.backtest import Evaluator
 from gluonts.torch import DeepAREstimator
 from pandas.tseries.frequencies import to_offset
-from pytorch_lightning.callbacks import EarlyStopping
+from lightning.pytorch.callbacks import EarlyStopping
 
 LOGGER = logging.getLogger(__name__)
 
@@ -164,17 +163,12 @@ def _build_config(prediction_length: int, freq: str, overrides: Mapping[str, Any
 def _warn_if_irregular(df: pd.DataFrame, cfg: DeepARConfig) -> None:
     irregular_series = []
     for item_id, group in df.groupby("item_id"):
-        timestamps = group["timestamp"].sort_values().to_series(index=None)
+        timestamps = group["timestamp"].sort_values().reset_index(drop=True)
         diffs = timestamps.diff().dropna()
         if diffs.empty:
             continue
-        expected_interval = (
-            pd.date_range("2000-01-01", periods=2, freq=cfg.freq)
-            .to_series(index=None)
-            .diff()
-            .dropna()
-            .iloc[0]
-        )
+        sample_index = pd.date_range("2000-01-01", periods=2, freq=cfg.freq)
+        expected_interval = sample_index[1] - sample_index[0]
         if (diffs != expected_interval).any():
             irregular_series.append(item_id)
     if irregular_series:
@@ -244,8 +238,13 @@ def _forecasts_to_frame(df: pd.DataFrame, forecasts: Iterable, cfg: DeepARConfig
     records = []
     for forecast in forecasts:
         item_id = forecast.item_id
+        start = forecast.start_date
+        if isinstance(start, pd.Period):
+            start_ts = start.to_timestamp(freq=cfg.freq, how="start")
+        else:
+            start_ts = pd.Timestamp(start)
         index = pd.date_range(
-            start=forecast.start_date,
+            start=start_ts,
             periods=cfg.prediction_length,
             freq=cfg.freq,
         )
