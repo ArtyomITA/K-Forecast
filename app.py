@@ -22,7 +22,7 @@ import sys
 import time
 from io import StringIO
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -49,336 +49,38 @@ from utils.theme import (
 st.set_page_config(page_title="K-Forecast", layout="wide")
 
 
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+CSS_FILE = ASSETS_DIR / "app.css"
+
+
 def inject_brand_css() -> None:
     """Inject Keytech-inspired dark theme styles."""
 
     font_stack = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
-    css = """
-    <style>
-    :root {{
-        --kt-orange: {KT_ORANGE};
-        --kt-dark-bg: {KT_DARK_BG};
-        --kt-card-bg: {KT_CARD_BG};
-        --kt-text: {KT_TEXT};
-        --kt-text-muted: {KT_TEXT_MUTED};
-        --kt-grey-stroke: {KT_GREY_STROKE};
-        --kt-success: {KT_SUCCESS};
-        --kt-warning: {KT_WARNING};
-        --kt-danger: {KT_DANGER};
-    }}
+    try:
+        css_template = CSS_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logging.warning("CSS file '%s' not found; skipping CSS injection", CSS_FILE)
+        return
 
-    html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {{
-        background-color: var(--kt-dark-bg);
-        color: var(--kt-text);
-        font-family: {font_stack};
-    }}
+    replacements = {
+        "__KT_ORANGE__": KT_ORANGE,
+        "__KT_DARK_BG__": KT_DARK_BG,
+        "__KT_CARD_BG__": KT_CARD_BG,
+        "__KT_TEXT__": KT_TEXT,
+        "__KT_TEXT_MUTED__": KT_TEXT_MUTED,
+        "__KT_GREY_STROKE__": KT_GREY_STROKE,
+        "__KT_SUCCESS__": KT_SUCCESS,
+        "__KT_WARNING__": KT_WARNING,
+        "__KT_DANGER__": KT_DANGER,
+        "__FONT_STACK__": font_stack,
+    }
 
-    .stApp {{
-        background: var(--kt-dark-bg) !important;
-    }}
+    css_filled = css_template
+    for placeholder, value in replacements.items():
+        css_filled = css_filled.replace(placeholder, value)
 
-    div.block-container {{
-        padding-top: 2.5rem;
-        padding-bottom: 3rem;
-    }}
-
-    [data-testid="stExpander"] {{
-        background: var(--kt-card-bg);
-        border: 1px solid var(--kt-grey-stroke);
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-    }}
-
-    [data-testid="stExpander"] details {{
-        padding: 0.2rem 1rem 1rem 1rem;
-    }}
-
-    [data-testid="stExpander"] summary {{
-        font-weight: 600;
-        color: var(--kt-text);
-    }}
-
-    [data-testid="stSidebar"] > div {{
-        background: var(--kt-card-bg);
-        border-right: 1px solid var(--kt-grey-stroke);
-    }}
-
-    .kt-card, .stMarkdown, .stRadio, .stFileUploader, .stAlert {{
-        background: var(--kt-card-bg) !important;
-        border-radius: 16px;
-        border: 1px solid var(--kt-grey-stroke);
-        padding: 0.75rem 1rem;
-    }}
-
-    div[data-testid="stVerticalBlock"] > div > div:has(.stButton) {{
-        margin-top: 1.5rem;
-    }}
-
-    .stButton > button {{
-        background: var(--kt-orange);
-        border-radius: 999px;
-        border: 1px solid var(--kt-orange);
-        color: #050608;
-        font-weight: 600;
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }}
-
-    .stButton > button:hover {{
-        transform: translateY(-1px);
-        box-shadow: 0 8px 20px rgba(255, 122, 0, 0.25);
-    }}
-
-    .stButton > button:focus {{
-        outline: 2px solid rgba(255, 122, 0, 0.6);
-        outline-offset: 2px;
-    }}
-
-    .stRadio > label {{
-        color: var(--kt-text-muted) !important;
-    }}
-
-    textarea, input[type="text"], input[type="number"], .stTextInput > div > div > input {{
-        background: var(--kt-card-bg);
-        color: var(--kt-text);
-        border: 1px solid var(--kt-grey-stroke);
-    }}
-
-    .stDataFrame {{
-        background: var(--kt-card-bg) !important;
-        border-radius: 12px;
-        border: 1px solid var(--kt-grey-stroke);
-        overflow: hidden;
-    }}
-
-    .stDataFrame thead tr {{
-        background: rgba(42, 48, 64, 0.9);
-    }}
-
-    .stDataFrame tbody tr:nth-child(odd) {{
-        background: rgba(28, 33, 46, 0.8);
-    }}
-
-    .stDataFrame tbody tr:nth-child(even) {{
-        background: rgba(17, 21, 31, 0.8);
-    }}
-
-    .stDataFrame table {{
-        color: var(--kt-text);
-    }}
-
-    .kt-metric-table {{
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 1rem;
-        background: var(--kt-card-bg);
-        border: 1px solid var(--kt-grey-stroke);
-        border-radius: 12px;
-        overflow: hidden;
-    }}
-
-    .kt-metric-table thead th {{
-        background: rgba(42, 48, 64, 0.9);
-        color: var(--kt-text);
-        padding: 0.65rem 1rem;
-        text-align: left;
-        font-size: 0.85rem;
-        letter-spacing: 0.02em;
-    }}
-
-    .kt-metric-table tbody td {{
-        padding: 0.6rem 1rem;
-        border-top: 1px solid rgba(255, 255, 255, 0.04);
-        text-align: right;
-        color: var(--kt-text);
-    }}
-
-    .kt-metric-table tbody tr:nth-child(odd) {{
-        background: rgba(28, 33, 46, 0.55);
-    }}
-
-    .kt-metric-table tbody tr:nth-child(even) {{
-        background: rgba(17, 21, 31, 0.55);
-    }}
-
-    .kt-metric-table tbody td:first-child,
-    .kt-metric-table thead th:first-child {{
-        text-align: left;
-    }}
-
-    .kt-metric-table .kt-badge {{
-        font-size: 0.75rem;
-        padding: 0.3rem 0.75rem;
-    }}
-
-    .kt-metric-table .kt-highlight {{
-        background: rgba(34, 197, 94, 0.18);
-        border-radius: 999px;
-        padding: 0.15rem 0.55rem;
-        font-weight: 600;
-        display: inline-block;
-        color: var(--kt-text);
-    }}
-
-    .kt-callout {{
-        margin-top: 1rem;
-        margin-bottom: 1.5rem;
-        padding: 1rem 1.25rem;
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: linear-gradient(120deg, rgba(255, 122, 0, 0.08), rgba(17, 21, 31, 0.6));
-        color: var(--kt-text);
-        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
-    }}
-
-    .kt-callout h4 {{
-        margin: 0 0 0.5rem 0;
-        font-size: 1rem;
-        color: var(--kt-text);
-    }}
-
-    .kt-callout ul {{
-        padding-left: 1.2rem;
-        margin: 0;
-        display: grid;
-        gap: 0.35rem;
-    }}
-
-    .kt-callout strong {{
-        color: {KT_ORANGE};
-    }}
-
-    .kt-info {{
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 1.25em;
-        height: 1.25em;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.12);
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        font-size: 0.65rem;
-        color: {KT_TEXT};
-        cursor: help;
-        margin-left: 0.4rem;
-    }}
-
-    .kt-chip-row {{
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.75rem;
-        margin: 0.5rem 0 1rem;
-    }}
-
-    .kt-chip {{
-        background: rgba(42, 48, 64, 0.75);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 999px;
-        padding: 0.4rem 0.9rem;
-        font-size: 0.85rem;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        display: inline-flex;
-        gap: 0.35rem;
-        align-items: center;
-    }}
-
-    .kt-chip--warning {{
-        border-color: rgba(245, 158, 11, 0.45);
-        color: {KT_WARNING};
-    }}
-
-    .kt-chip--danger {{
-        border-color: rgba(239, 68, 68, 0.45);
-        color: {KT_DANGER};
-    }}
-
-    .kt-chip--success {{
-        border-color: rgba(34, 197, 94, 0.45);
-        color: {KT_SUCCESS};
-    }}
-
-    .kt-header-badges {{
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 0.5rem;
-        width: 100%;
-    }}
-
-    .kt-header-badges__row {{
-        display: flex;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-    }}
-
-    .kt-action-row {{
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.75rem;
-        margin-top: 1rem;
-    }}
-
-    .kt-copy {{
-        background: var(--kt-orange);
-        border: none;
-        color: #050608;
-        font-weight: 600;
-        border-radius: 999px;
-        padding: 0.55rem 1.25rem;
-        cursor: pointer;
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }}
-
-    .kt-copy:hover {{
-        transform: translateY(-1px);
-        box-shadow: 0 8px 20px rgba(255, 122, 0, 0.25);
-    }}
-
-    .kt-download-disabled {{
-        opacity: 0.5;
-        cursor: not-allowed;
-    }}
-
-    .kt-badge {{
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        padding: 0.35rem 0.8rem;
-        font-size: 0.8rem;
-        line-height: 1;
-        border-radius: 999px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        font-weight: 600;
-    }}
-
-    .kt-subheader {{
-        color: var(--kt-text-muted);
-    }}
-
-    .stAlert {{
-        border-left: 3px solid var(--kt-warning);
-    }}
-    </style>
-    """
-
-    st.markdown(
-        css.format(
-            KT_ORANGE=KT_ORANGE,
-            KT_DARK_BG=KT_DARK_BG,
-            KT_CARD_BG=KT_CARD_BG,
-            KT_TEXT=KT_TEXT,
-            KT_TEXT_MUTED=KT_TEXT_MUTED,
-            KT_GREY_STROKE=KT_GREY_STROKE,
-            KT_SUCCESS=KT_SUCCESS,
-            KT_WARNING=KT_WARNING,
-            KT_DANGER=KT_DANGER,
-            font_stack=font_stack,
-        ),
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"<style>{css_filled}</style>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Application-wide constants
@@ -388,6 +90,69 @@ MODEL_KEY_MAP = {
     "Chronos-Bolt": "chronos",
     "DeepAR": "deepar",
     "AutoML (AG-TS)": "automl",
+}
+DATASET_REGISTRY: dict[str, dict[str, Any]] = {
+    "deepar": {
+        "label": "Mock SD (vendite)",
+        "path": "data/mock_sd_sales.csv",
+        "expected": [
+            "item_id",
+            "timestamp",
+            "target",
+            "sku",
+            "customer",
+            "area",
+            "promo_flag",
+            "price_idx",
+        ],
+    },
+    "chronos": {
+        "label": "Mock Cash (incassi)",
+        "path": "data/mock_bank_flows.csv",
+        "expected": [
+            "item_id",
+            "timestamp",
+            "target",
+        ],
+    },
+    "automl": {
+        "label": "Mock AP (pagamenti)",
+        "path": "data/mock_ap_payments.csv",
+        "expected": [
+            "item_id",
+            "timestamp",
+            "target",
+            "due_flag",
+            "supplier",
+            "company_code",
+        ],
+    },
+}
+USECASE_COPY: dict[str, dict[str, Any]] = {
+    "deepar": {
+        "title": "Use case: Domanda commerciale (SD)",
+        "bullets": [
+            "Previsioni vendite SKU×Cliente×Area",
+            "Covariate: promo, prezzo, calendario",
+            "Output per serie con intervalli p10–p90",
+        ],
+    },
+    "chronos": {
+        "title": "Use case: Incassi AR (Tesoreria)",
+        "bullets": [
+            "Serie storiche di incasso giornaliero",
+            "Scenario rapido/zero-shot",
+            "Output con banda d'incertezza",
+        ],
+    },
+    "automl": {
+        "title": "Use case: Pagamenti AP (intermittenti)",
+        "bullets": [
+            "Serie con molti zeri e spike (MIRO/fornitori)",
+            "Regressori opzionali (due_flag, supplier)",
+            "Confronto modelli statistici",
+        ],
+    },
 }
 HORIZON_OPTIONS = (7, 30, 90)
 DEFAULT_HORIZON = 30
@@ -441,13 +206,64 @@ def render_sidebar() -> dict[str, Any]:
     st.sidebar.header("Configurazione")
     model_display = st.sidebar.selectbox("Modello", MODEL_DISPLAY_NAMES, index=0)
     horizon = st.sidebar.select_slider("Orizzonte (giorni)", options=HORIZON_OPTIONS, value=DEFAULT_HORIZON)
+
+    model_key = MODEL_KEY_MAP[model_display]
+    mock_options = list(DATASET_REGISTRY.items())
+
+    source_choice = st.sidebar.radio(
+        "Sorgente dati",
+        (
+            "Mock specifico",
+            "Mock alternativo",
+            "Carica CSV",
+        ),
+        index=0,
+        key="dataset_source_radio",
+    )
+
+    alt_mock_label = None
+    alt_mock_key = None
+    if source_choice == "Mock alternativo":
+        labels = [meta["label"] for _, meta in mock_options]
+        default_index = next((idx for idx, (key, _) in enumerate(mock_options) if key != model_key), 0)
+        alt_mock_label = st.sidebar.selectbox(
+            "Seleziona mock",
+            options=labels,
+            index=default_index,
+        )
+        for key, meta in mock_options:
+            if meta["label"] == alt_mock_label:
+                alt_mock_key = key
+                break
+        if alt_mock_key is None and mock_options:
+            alt_mock_key = mock_options[default_index][0]
+    else:
+        alt_mock_key = model_key if source_choice == "Mock specifico" else None
+
+    dataset_source_key = {
+        "Mock specifico": "mock_specific",
+        "Mock alternativo": "mock_alt",
+        "Carica CSV": "upload",
+    }[source_choice]
+    st.session_state["dataset_source"] = dataset_source_key
+    st.session_state["dataset_choice"] = alt_mock_key
+
+    LOGGER.info(
+        "[UI] dataset_source=%s | model_key=%s | mock_choice=%s",
+        dataset_source_key,
+        model_key,
+        alt_mock_key,
+    )
+
     debug_mode = st.sidebar.checkbox("DEBUG logs", value=False)
 
     return {
         "model_display": model_display,
-        "model_key": MODEL_KEY_MAP[model_display],
+        "model_key": model_key,
         "horizon": int(horizon),
         "debug_mode": debug_mode,
+        "dataset_source": dataset_source_key,
+        "dataset_choice": alt_mock_key,
     }
 
 
@@ -527,36 +343,30 @@ def render_main_area(options: dict[str, Any]) -> None:
         st.markdown("**Assunzioni:** {{ASSUNZIONI_TXT}}")
         st.markdown("**Limiti:** {{LIMITI_TXT}}")
 
-    data_choice = st.radio("Sorgente dati", ("Usa mock data", "Carica CSV"), horizontal=True)
-    uploaded_file = None
-    if data_choice == "Carica CSV":
-        uploaded_file = st.file_uploader("Carica dataset long (item_id,timestamp,target)", type=["csv"])
-
     chart_placeholder = st.empty()
     metrics_placeholder = st.empty()
     download_placeholder = st.empty()
 
-    dataset_df, dataset_origin = _resolve_dataset(data_choice, uploaded_file)
-    if dataset_df is None:
-        if data_choice == "Carica CSV":
-            st.info("Carica un CSV per abilitare il forecast.")
-        else:
-            if dataset_origin == "mock_sd_missing":
-                # Messaggio già mostrato in _resolve_dataset; nulla da aggiungere.
-                pass
-            else:
-                st.warning("Dataset mock non trovato. Generarlo con scripts/generate_mock_bank_flows.py.")
-        return
-
-    dataset_df, resampled = _ensure_daily_frequency(dataset_df, DEFAULT_FREQ)
-    if resampled:
-        st.warning("Timestamp irregolari rilevati: effettuato resample giornaliero con forward-fill.")
+    dataset_df = _load_dataset_for_model(options["model_key"])
 
     freq = _infer_frequency(dataset_df) or DEFAULT_FREQ
 
     date_min = dataset_df["timestamp"].min()
     date_max = dataset_df["timestamp"].max()
-    st.caption(f"Origine: {dataset_origin} · Range: {date_min:%Y-%m-%d} → {date_max:%Y-%m-%d}")
+    origin_label = st.session_state.get("dataset_origin_label", "Sorgente sconosciuta")
+    st.caption(f"Origine: {origin_label} · Range: {date_min:%Y-%m-%d} → {date_max:%Y-%m-%d}")
+
+    usecase = USECASE_COPY.get(options["model_key"], {})
+    title = usecase.get("title", "Use case")
+    bullets = usecase.get("bullets", [])
+    with st.expander(title, expanded=True):
+        for bullet in bullets:
+            st.markdown(f"• {bullet}")
+        st.caption("Schema rilevato: " + ", ".join(sorted(map(str, dataset_df.columns.tolist()))))
+        st.dataframe(dataset_df.head(5), use_container_width=True)
+
+    event_columns = {"promo_flag", "due_flag", "event_flag"}
+    st.session_state["has_events"] = bool(event_columns & set(dataset_df.columns))
 
     run_button = st.button("Esegui Forecast", type="primary", use_container_width=True)
     if not run_button:
@@ -713,32 +523,50 @@ def handle_forecast(
 # Dataset utilities
 # ---------------------------------------------------------------------------
 
-def _resolve_dataset(choice: str, upload) -> tuple[pd.DataFrame | None, str]:
-    if choice == "Usa mock data":
-        selected = st.session_state.get("selected_model_key")
-        if selected == "deepar":
-            if MOCK_SD_PATH.exists():
-                LOGGER.info("Carico dataset mock SD da %s", MOCK_SD_PATH)
-                df_raw = pd.read_csv(MOCK_SD_PATH)
-                df = _standardise_dataframe(df_raw)
-                _log_sd_mock_dataset(df)
-                return df, MOCK_SD_PATH.as_posix()
-            st.warning("Dataset mock SD non trovato. Esegui scripts/generate_mock_sd_sales.py.")
-            return None, "mock_sd_missing"
-        return _load_mock_dataset()
-    if upload is None:
-        return None, ""
-    LOGGER.info("Carico dataset da upload (%s bytes)", upload.size)
-    return _standardise_dataframe(pd.read_csv(upload)), "upload"
+def _load_dataset_for_model(model_key: str) -> pd.DataFrame:
+    dataset_source = st.session_state.get("dataset_source", "mock_specific")
+    registry = DATASET_REGISTRY
 
+    if dataset_source == "upload":
+        uploaded = st.file_uploader(
+            "Carica CSV (long: item_id,timestamp,target + extra opz.)",
+            type=["csv"],
+            key="dataset_upload",
+        )
+        if uploaded is None:
+            st.stop()
+        df_upload = pd.read_csv(uploaded)
+        st.session_state["dataset_origin_label"] = "Upload CSV"
+        return _validate_and_fix(df_upload, model_key)
 
-@st.cache_data(show_spinner=False)
-def _load_mock_dataset() -> tuple[pd.DataFrame | None, str]:
-    if not MOCK_DATA_PATH.exists():
-        LOGGER.warning("Mock dataset non presente in %s", MOCK_DATA_PATH)
-        return None, ""
-    df = pd.read_csv(MOCK_DATA_PATH)
-    return _standardise_dataframe(df), MOCK_DATA_PATH.as_posix()
+    target_key = model_key
+    if dataset_source == "mock_alt":
+        alt_key = st.session_state.get("dataset_choice", model_key)
+        if alt_key not in registry:
+            LOGGER.warning("Chiave mock alternativo non presente, uso %s", model_key)
+            alt_key = model_key
+        target_key = alt_key
+
+    entry = registry.get(target_key)
+    if not entry:
+        LOGGER.warning("Dataset non configurato per la chiave %s", target_key)
+        st.warning("Dataset non configurato nella registry. Aggiorna DATASET_REGISTRY.")
+        st.stop()
+
+    dataset_path = Path(entry["path"])
+    if not dataset_path.exists():
+        st.warning(f"Mock non trovato: {dataset_path}. Genera i dati con lo script dedicato.")
+        st.stop()
+
+    LOGGER.info("Carico dataset mock '%s' da %s", entry["label"], dataset_path)
+    df_mock = pd.read_csv(dataset_path)
+    cleaned = _validate_and_fix(df_mock, target_key, expected_cols=entry.get("expected"))
+    st.session_state["dataset_origin_label"] = entry["label"]
+
+    if target_key == "deepar":
+        _log_sd_mock_dataset(cleaned)
+
+    return cleaned
 
 
 def _log_sd_mock_dataset(df: pd.DataFrame) -> None:
@@ -760,17 +588,74 @@ def _log_sd_mock_dataset(df: pd.DataFrame) -> None:
     )
 
 
-def _standardise_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    required = {"item_id", "timestamp", "target"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"Il dataset deve contenere le colonne {sorted(required)}")
+def _validate_and_fix(
+    df: pd.DataFrame,
+    model_key: str,
+    *,
+    expected_cols: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    required_base = {"item_id", "timestamp", "target"}
+    missing_base = required_base - set(df.columns)
+    if missing_base:
+        st.error(
+            "Dataset privo delle colonne obbligatorie: {}".format(
+                ", ".join(sorted(missing_base))
+            )
+        )
+        st.stop()
 
-    df = df.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=False)
-    df.sort_values(["item_id", "timestamp"], inplace=True)
-    df.reset_index(drop=True, inplace=True)
-    return df
+    df_work = df.copy()
+
+    expected_missing: list[str] = []
+    if expected_cols:
+        expected_set = set(expected_cols)
+        present_set = set(df_work.columns)
+        expected_missing = sorted(expected_set - present_set)
+        extra_cols = sorted(present_set - expected_set)
+        summary = (
+            f"Colonne attese: {', '.join(expected_cols)} | "
+            f"Trovate: {', '.join(sorted(df_work.columns))} | "
+            f"Mancanti: {', '.join(expected_missing) if expected_missing else 'nessuna'}"
+        )
+        st.info(summary)
+        if extra_cols:
+            st.caption(f"Colonne extra rilevate: {', '.join(extra_cols)}")
+
+    df_work["item_id"] = df_work["item_id"].astype(str)
+    df_work["timestamp"] = pd.to_datetime(df_work["timestamp"], utc=False, errors="coerce")
+    invalid_ts = df_work["timestamp"].isna()
+    if invalid_ts.any():
+        st.warning(f"Righe con timestamp non valido rimosse: {int(invalid_ts.sum())}")
+        df_work = df_work[~invalid_ts]
+
+    df_work.sort_values(["item_id", "timestamp"], inplace=True)
+    df_work.reset_index(drop=True, inplace=True)
+
+    df_resampled, touched = _ensure_daily_frequency(df_work, DEFAULT_FREQ)
+    if touched:
+        st.caption("Timestamp irregolari rilevati: effettuato resample giornaliero (ffill).")
+
+    if model_key == "deepar":
+        dow = df_resampled["timestamp"].dt.weekday.astype(float)
+        if "dow_sin" not in df_resampled.columns:
+            df_resampled["dow_sin"] = np.sin(2 * np.pi * dow / 7.0)
+        if "dow_cos" not in df_resampled.columns:
+            df_resampled["dow_cos"] = np.cos(2 * np.pi * dow / 7.0)
+        if "eom_flag" not in df_resampled.columns:
+            df_resampled["eom_flag"] = df_resampled["timestamp"].dt.is_month_end.astype(int)
+    elif model_key == "automl":
+        if "due_flag" not in df_resampled.columns:
+            df_resampled["due_flag"] = 0
+
+    LOGGER.info(
+        "[DATA] model=%s | rows=%d | series=%d | missing=%s",
+        model_key,
+        len(df_resampled),
+        df_resampled["item_id"].nunique(),
+        expected_missing,
+    )
+
+    return df_resampled
 
 
 def _compute_run_signature(df: pd.DataFrame, horizon: int, freq: str) -> str:

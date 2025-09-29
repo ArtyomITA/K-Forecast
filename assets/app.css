@@ -1,0 +1,306 @@
+:root {
+    --kt-orange: __KT_ORANGE__;
+    --kt-dark-bg: __KT_DARK_BG__;
+    --kt-card-bg: __KT_CARD_BG__;
+    --kt-text: __KT_TEXT__;
+    --kt-text-muted: __KT_TEXT_MUTED__;
+    --kt-grey-stroke: __KT_GREY_STROKE__;
+    --kt-success: __KT_SUCCESS__;
+    --kt-warning: __KT_WARNING__;
+    --kt-danger: __KT_DANGER__;
+}
+
+html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
+    background-color: var(--kt-dark-bg);
+    color: var(--kt-text);
+    font-family: __FONT_STACK__;
+}
+
+.stApp {
+    background: var(--kt-dark-bg) !important;
+}
+
+div.block-container {
+    padding-top: 2.5rem;
+    padding-bottom: 3rem;
+}
+
+[data-testid="stExpander"] {
+    background: var(--kt-card-bg);
+    border: 1px solid var(--kt-grey-stroke);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+}
+
+[data-testid="stExpander"] details {
+    padding: 0.2rem 1rem 1rem 1rem;
+}
+
+[data-testid="stExpander"] summary {
+    font-weight: 600;
+    color: var(--kt-text);
+}
+
+[data-testid="stSidebar"] > div {
+    background: var(--kt-card-bg);
+    border-right: 1px solid var(--kt-grey-stroke);
+}
+
+.kt-card, .stMarkdown, .stRadio, .stFileUploader, .stAlert {
+    background: var(--kt-card-bg) !important;
+    border-radius: 16px;
+    border: 1px solid var(--kt-grey-stroke);
+    padding: 0.75rem 1rem;
+}
+
+div[data-testid="stVerticalBlock"] > div > div:has(.stButton) {
+    margin-top: 1.5rem;
+}
+
+.stButton > button {
+    background: var(--kt-orange);
+    border-radius: 999px;
+    border: 1px solid var(--kt-orange);
+    color: #050608;
+    font-weight: 600;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stButton > button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(255, 122, 0, 0.25);
+}
+
+.stButton > button:focus {
+    outline: 2px solid rgba(255, 122, 0, 0.6);
+    outline-offset: 2px;
+}
+
+.stRadio > label {
+    color: var(--kt-text-muted) !important;
+}
+
+textarea, input[type="text"], input[type="number"], .stTextInput > div > div > input {
+    background: var(--kt-card-bg);
+    color: var(--kt-text);
+    border: 1px solid var(--kt-grey-stroke);
+}
+
+.stDataFrame {
+    background: var(--kt-card-bg) !important;
+    border-radius: 12px;
+    border: 1px solid var(--kt-grey-stroke);
+    overflow: hidden;
+}
+
+.stDataFrame thead tr {
+    background: rgba(42, 48, 64, 0.9);
+}
+
+.stDataFrame tbody tr:nth-child(odd) {
+    background: rgba(28, 33, 46, 0.8);
+}
+
+.stDataFrame tbody tr:nth-child(even) {
+    background: rgba(17, 21, 31, 0.8);
+}
+
+.stDataFrame table {
+    color: var(--kt-text);
+}
+
+.kt-metric-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    background: var(--kt-card-bg);
+    border: 1px solid var(--kt-grey-stroke);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.kt-metric-table thead th {
+    background: rgba(42, 48, 64, 0.9);
+    color: var(--kt-text);
+    padding: 0.65rem 1rem;
+    text-align: left;
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+}
+
+.kt-metric-table tbody td {
+    padding: 0.6rem 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    text-align: right;
+    color: var(--kt-text);
+}
+
+.kt-metric-table tbody tr:nth-child(odd) {
+    background: rgba(28, 33, 46, 0.55);
+}
+
+.kt-metric-table tbody tr:nth-child(even) {
+    background: rgba(17, 21, 31, 0.55);
+}
+
+.kt-metric-table tbody td:first-child,
+.kt-metric-table thead th:first-child {
+    text-align: left;
+}
+
+.kt-metric-table .kt-badge {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.75rem;
+}
+
+.kt-metric-table .kt-highlight {
+    background: rgba(34, 197, 94, 0.18);
+    border-radius: 999px;
+    padding: 0.15rem 0.55rem;
+    font-weight: 600;
+    display: inline-block;
+    color: var(--kt-text);
+}
+
+.kt-callout {
+    margin-top: 1rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem 1.25rem;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(120deg, rgba(255, 122, 0, 0.08), rgba(17, 21, 31, 0.6));
+    color: var(--kt-text);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+}
+
+.kt-callout h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1rem;
+    color: var(--kt-text);
+}
+
+.kt-callout ul {
+    padding-left: 1.2rem;
+    margin: 0;
+    display: grid;
+    gap: 0.35rem;
+}
+
+.kt-callout strong {
+    color: __KT_ORANGE__;
+}
+
+.kt-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25em;
+    height: 1.25em;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-size: 0.65rem;
+    color: __KT_TEXT__;
+    cursor: help;
+    margin-left: 0.4rem;
+}
+
+.kt-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin: 0.5rem 0 1rem;
+}
+
+.kt-chip {
+    background: rgba(42, 48, 64, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.kt-chip--warning {
+    border-color: rgba(245, 158, 11, 0.45);
+    color: __KT_WARNING__;
+}
+
+.kt-chip--danger {
+    border-color: rgba(239, 68, 68, 0.45);
+    color: __KT_DANGER__;
+}
+
+.kt-chip--success {
+    border-color: rgba(34, 197, 94, 0.45);
+    color: __KT_SUCCESS__;
+}
+
+.kt-header-badges {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.kt-header-badges__row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.kt-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.kt-copy {
+    background: var(--kt-orange);
+    border: none;
+    color: #050608;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 0.55rem 1.25rem;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kt-copy:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(255, 122, 0, 0.25);
+}
+
+.kt-download-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.kt-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.8rem;
+    font-size: 0.8rem;
+    line-height: 1;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+}
+
+.kt-subheader {
+    color: var(--kt-text-muted);
+}
+
+.stAlert {
+    border-left: 3px solid var(--kt-warning);
+}
