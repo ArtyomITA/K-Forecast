@@ -393,6 +393,8 @@ HORIZON_OPTIONS = (7, 30, 90)
 DEFAULT_HORIZON = 30
 DEFAULT_FREQ = "D"
 MOCK_DATA_PATH = Path("data/mock_bank_flows.csv")
+MOCK_SD_PATH = Path("data/mock_sd_sales.csv")
+PRICE_DRIFT_THRESHOLD = 0.03
 SESSION_FORECAST_CACHE_KEY = "kt_forecast_cache"
 
 # Default hyper-parameters passed to model wrappers.
@@ -401,7 +403,7 @@ DEEPAR_DEFAULTS: dict[str, Any] = {
     "batch_size": 64,
     "learning_rate": 1e-3,
     "context_length_mult": 4,
-    "num_samples": 100,
+    "num_samples": 200,
     "num_workers": 0,
     "device": "cpu",
     "early_stop_patience": 5,
@@ -539,7 +541,11 @@ def render_main_area(options: dict[str, Any]) -> None:
         if data_choice == "Carica CSV":
             st.info("Carica un CSV per abilitare il forecast.")
         else:
-            st.warning("Dataset mock non trovato. Generarlo con scripts/generate_mock_bank_flows.py.")
+            if dataset_origin == "mock_sd_missing":
+                # Messaggio già mostrato in _resolve_dataset; nulla da aggiungere.
+                pass
+            else:
+                st.warning("Dataset mock non trovato. Generarlo con scripts/generate_mock_bank_flows.py.")
         return
 
     dataset_df, resampled = _ensure_daily_frequency(dataset_df, DEFAULT_FREQ)
@@ -581,6 +587,7 @@ def main() -> None:
 
     inject_brand_css()
     options = render_sidebar()
+    st.session_state["selected_model_key"] = options["model_key"]
     configure_logging(options["debug_mode"])
     LOGGER.info("Modello selezionato: %s | Horizon=%d", options["model_display"], options["horizon"])
     render_main_area(options)
@@ -633,6 +640,7 @@ def handle_forecast(
                 dataset_df,
                 horizon,
                 freq,
+                use_covariates=True,
                 **DEEPAR_DEFAULTS,
             )
         else:  # automl
@@ -697,6 +705,7 @@ def handle_forecast(
         comparison_payload=comparison_payload,
         quantile_messages=quantile_messages,
         horizon=horizon,
+        source_df=dataset_df,
     )
 
 
@@ -706,6 +715,16 @@ def handle_forecast(
 
 def _resolve_dataset(choice: str, upload) -> tuple[pd.DataFrame | None, str]:
     if choice == "Usa mock data":
+        selected = st.session_state.get("selected_model_key")
+        if selected == "deepar":
+            if MOCK_SD_PATH.exists():
+                LOGGER.info("Carico dataset mock SD da %s", MOCK_SD_PATH)
+                df_raw = pd.read_csv(MOCK_SD_PATH)
+                df = _standardise_dataframe(df_raw)
+                _log_sd_mock_dataset(df)
+                return df, MOCK_SD_PATH.as_posix()
+            st.warning("Dataset mock SD non trovato. Esegui scripts/generate_mock_sd_sales.py.")
+            return None, "mock_sd_missing"
         return _load_mock_dataset()
     if upload is None:
         return None, ""
@@ -720,6 +739,25 @@ def _load_mock_dataset() -> tuple[pd.DataFrame | None, str]:
         return None, ""
     df = pd.read_csv(MOCK_DATA_PATH)
     return _standardise_dataframe(df), MOCK_DATA_PATH.as_posix()
+
+
+def _log_sd_mock_dataset(df: pd.DataFrame) -> None:
+    series_count = int(df["item_id"].nunique()) if "item_id" in df.columns else 0
+    promo_series = df.get("promo_flag")
+    promo_ratio = 0.0
+    if promo_series is not None and len(promo_series) > 0:
+        promo_numeric = pd.to_numeric(promo_series, errors="coerce").fillna(0)
+        promo_ratio = float((promo_numeric > 0).mean() * 100)
+    areas: list[str] = []
+    if "area" in df.columns:
+        areas = sorted({str(value) for value in df["area"].dropna().unique()})
+    areas_label = ", ".join(areas) if areas else "n/d"
+    LOGGER.info(
+        "[INFO][SD] mock dataset detected | series=%d | promo_days=%.1f%% | areas={%s}",
+        series_count,
+        promo_ratio,
+        areas_label,
+    )
 
 
 def _standardise_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -835,6 +873,7 @@ def _render_outputs(
     comparison_payload: dict[str, dict[str, Any]],
     quantile_messages: dict[str, str],
     horizon: int,
+    source_df: pd.DataFrame,
 ) -> None:
     all_actual = pd.concat([train_df, holdout_df], ignore_index=True) if not train_df.empty else holdout_df
 
@@ -842,6 +881,9 @@ def _render_outputs(
     if not available_items:
         st.warning("Nessuna serie disponibile nelle previsioni.")
         return
+
+    if model_label == "deepar":
+        _render_sd_use_case_panel(source_df)
 
     display_name_by_key = {value: key for key, value in MODEL_KEY_MAP.items()}
 
@@ -886,6 +928,8 @@ def _render_outputs(
     with chart_placeholder.container():
         st.markdown(chips_html, unsafe_allow_html=True)
         st.plotly_chart(main_fig, use_container_width=True)
+        if events and any(event.label == "PROMO" for event in events):
+            st.caption("Bande PROMO = periodi promozionali considerati come covariata")
 
     tab_single, tab_compare = st.tabs(["Singolo modello", "Confronto modelli"])
 
@@ -1088,6 +1132,48 @@ def _render_single_model_section(
             st.markdown(copy_button, unsafe_allow_html=True)
 
 
+def _render_sd_use_case_panel(df: pd.DataFrame) -> None:
+    price_threshold_pct = PRICE_DRIFT_THRESHOLD * 100
+    bullet_html = f"""
+    <div class="kt-callout">
+        <h4>Use case: Domanda commerciale (SD)</h4>
+        <ul>
+            <li>SKU × Cliente × Area</li>
+        	<li>Promo (<code>promo_flag</code>)</li>
+        	<li>Indice prezzo (<code>price_idx</code>)</li>
+            <li><strong>Valori consigliati (demo)</strong>
+                <ul>
+                    <li>Orizzonte default: 30 giorni</li>
+                    <li>Epoche: 30 (demo) con early_stop_patience=5</li>
+                    <li>Num samples: 200 per quantili più stabili</li>
+                    <li>Embedding dimension: euristica radice quarta × 4 (prompt 2)</li>
+                    <li>Soglia drift prezzo: ±{price_threshold_pct:.0f}%</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+    """
+
+    st.markdown(bullet_html, unsafe_allow_html=True)
+
+    columns_to_check = ["sku", "customer", "area", "promo_flag", "price_idx"]
+    rows = []
+    for column in columns_to_check:
+        present = column in df.columns
+        example = ""
+        if present:
+            sample_value = df[column].dropna().astype(str).head(1).tolist()
+            example = sample_value[0] if sample_value else ""
+        rows.append({
+            "Colonna": column,
+            "Presente": "✅" if present else "—",
+            "Esempio": example,
+        })
+
+    table_df = pd.DataFrame(rows)
+    st.table(table_df)
+
+
 def _render_comparison_section(
     *,
     all_actual: pd.DataFrame,
@@ -1218,17 +1304,67 @@ def _render_comparison_section(
 
 
 def _generate_event_bands(all_actual: pd.DataFrame, forecast_df: pd.DataFrame, item_id: str):
-    labels = ["STIPENDI", "IVA", "Ritardo incassi"]
-    actual_dates = (
-        all_actual[all_actual["item_id"] == item_id]["timestamp"]
-        if not all_actual.empty
-        else pd.Series(dtype="datetime64[ns]")
-    )
-    forecast_dates = forecast_df[forecast_df["item_id"] == item_id]["timestamp"]
-    combined = pd.concat([actual_dates, forecast_dates], ignore_index=True).dropna().sort_values().reset_index(drop=True)
+    promo_col = "promo_flag"
+
+    def _collect_timestamps() -> pd.Series:
+        actual_dates = (
+            all_actual[all_actual["item_id"] == item_id]["timestamp"]
+            if not all_actual.empty
+            else pd.Series(dtype="datetime64[ns]")
+        )
+        forecast_dates = forecast_df[forecast_df["item_id"] == item_id]["timestamp"]
+        return pd.concat([actual_dates, forecast_dates], ignore_index=True).dropna().sort_values().reset_index(drop=True)
+
+    combined = _collect_timestamps()
     if combined.empty:
         return []
 
+    diffs = combined.sort_values().diff().dropna()
+    if diffs.empty:
+        half_window = pd.Timedelta(hours=12)
+    else:
+        min_delta = diffs.min()
+        if isinstance(min_delta, pd.Timedelta) and min_delta > pd.Timedelta(0):
+            half_window = min_delta / 2
+        else:
+            half_window = pd.Timedelta(hours=12)
+
+    item_actual = all_actual[all_actual["item_id"] == item_id].sort_values("timestamp") if not all_actual.empty else pd.DataFrame()
+
+    if not item_actual.empty and promo_col in item_actual.columns and item_actual[promo_col].fillna(0).ne(0).any():
+        bands: list[EventBand] = []
+        start_ts: pd.Timestamp | None = None
+        last_ts: pd.Timestamp | None = None
+
+        for row in item_actual.itertuples():
+            ts = getattr(row, "timestamp", None)
+            if pd.isna(ts):
+                continue
+            if not isinstance(ts, pd.Timestamp):
+                try:
+                    ts = pd.Timestamp(ts)
+                except (TypeError, ValueError):
+                    continue
+
+            raw_flag = getattr(row, promo_col)
+            flag_active = False if pd.isna(raw_flag) else bool(raw_flag)
+
+            if flag_active:
+                if start_ts is None:
+                    start_ts = ts
+                last_ts = ts
+            elif start_ts is not None and last_ts is not None:
+                bands.append(EventBand(label="PROMO", start=start_ts - half_window, end=last_ts + half_window))
+                start_ts = None
+                last_ts = None
+
+        if start_ts is not None and last_ts is not None:
+            bands.append(EventBand(label="PROMO", start=start_ts - half_window, end=last_ts + half_window))
+
+        return bands
+
+    # Fallback to existing demo labels when promo_flag is unavailable.
+    labels = ["STIPENDI", "IVA", "Ritardo incassi"]
     unique_dates = combined.drop_duplicates()
     count = min(len(labels), len(unique_dates))
     if count == 0:
@@ -1238,7 +1374,7 @@ def _generate_event_bands(all_actual: pd.DataFrame, forecast_df: pd.DataFrame, i
     bands = []
     for label, idx in zip(labels, indices):
         ts = pd.to_datetime(unique_dates.iloc[idx])
-        bands.append(EventBand(label=label, start=ts - pd.Timedelta(hours=12), end=ts + pd.Timedelta(hours=12)))
+        bands.append(EventBand(label=label, start=ts - half_window, end=ts + half_window))
     return bands
 
 
