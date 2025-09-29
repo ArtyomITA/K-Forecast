@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Tuple
+import math
+import re
 
 import pandas as pd
 
@@ -192,23 +194,81 @@ def _predict_to_frame(predictor, df: pd.DataFrame, cfg: AutoGluonConfig) -> pd.D
         timestamp_column=DEFAULT_TS_COL,
     )
 
-    forecasts = predictor.predict(ts_df, as_pandas=True)
-    forecasts.reset_index(inplace=True)
+    forecasts = predictor.predict(ts_df)
+    if hasattr(forecasts, "reset_index"):
+        forecasts = forecasts.reset_index()
+    else:
+        forecasts = forecasts.to_dataframe().reset_index()
 
-    rename_map = {}
-    for column in forecasts.columns:
-        if column in {DEFAULT_ID_COL, DEFAULT_TS_COL}:
-            continue
-        if column.startswith("quantile_"):
-            q = column.split("_", 1)[1]
-            rename_map[column] = f"p{float(q) * 100:.0f}".replace(".0", "")
-
-    forecast_df = forecasts.rename(columns=rename_map)
+    forecast_df = _harmonise_forecast_columns(forecasts)
     forecast_df = forecast_df[[DEFAULT_ID_COL, DEFAULT_TS_COL, "p10", "p50", "p90"]]
     forecast_df[DEFAULT_TS_COL] = pd.to_datetime(forecast_df[DEFAULT_TS_COL], utc=False)
     forecast_df.sort_values([DEFAULT_ID_COL, DEFAULT_TS_COL], inplace=True)
     forecast_df.reset_index(drop=True, inplace=True)
     return forecast_df
+
+
+def _harmonise_forecast_columns(df: pd.DataFrame) -> pd.DataFrame:
+    result = df.copy()
+
+    rename_map: Dict[Any, str] = {}
+    for column in result.columns:
+        if column in {DEFAULT_ID_COL, DEFAULT_TS_COL}:
+            continue
+        normalized = _extract_quantile_label(column)
+        if normalized and str(column) != normalized and normalized not in result.columns:
+            rename_map[column] = normalized
+
+    if rename_map:
+        result.rename(columns=rename_map, inplace=True)
+
+    if "p50" not in result.columns:
+        for candidate in ("median", "mean"):
+            if candidate in result.columns:
+                result["p50"] = result[candidate]
+                LOGGER.warning("AutoGluon output missing p50; using '%s' column as substitute.", candidate)
+                break
+
+    required = {"p10", "p90"}
+    for missing in required - set(result.columns):
+        if "p50" in result.columns:
+            result[missing] = result["p50"]
+            LOGGER.warning("AutoGluon output missing %s; duplicating p50 as fallback.", missing)
+
+    if "p50" not in result.columns:
+        raise ValueError("AutoGluon forecast missing central tendency (p50/mean/median).")
+
+    return result
+
+
+def _extract_quantile_label(column: Any) -> str | None:
+    if column in {DEFAULT_ID_COL, DEFAULT_TS_COL}:
+        return None
+    if isinstance(column, tuple):
+        label = "_".join(str(part) for part in column if part is not None)
+    else:
+        label = str(column)
+
+    lowered = label.lower()
+    if "quantile" in lowered:
+        lowered = lowered.replace("quantile", "")
+
+    match = re.search(r"(\d+(?:\.\d+)?)", lowered)
+    if not match:
+        return None
+
+    value = float(match.group(1))
+    if value <= 1:
+        value *= 100
+
+    if math.isclose(value, 10.0, rel_tol=1e-9, abs_tol=1e-6):
+        return "p10"
+    if math.isclose(value, 50.0, rel_tol=1e-9, abs_tol=1e-6):
+        return "p50"
+    if math.isclose(value, 90.0, rel_tol=1e-9, abs_tol=1e-6):
+        return "p90"
+
+    return None
 
 
 def _add_covariates(df: pd.DataFrame) -> pd.DataFrame:
