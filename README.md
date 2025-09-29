@@ -64,8 +64,8 @@ consultare il documento [`README-tech.md`](README-tech.md).
 
 ## Contatti
 
-- **Referente Prodotto**: Alessia Rossi – alessia.rossi@keytech.it
-- **Team Data & AI**: data.ai@keytech.it
+- **Referente Prodotto**: Adrian Ciprian Iancu – adrian.iancu@keytech.it
+- **TeamLeader FullStack AI**: sandro.rossano@keytech.it
 
 Per feedback e priorità aggiuntive scrivere al team o aprire una issue
 indicando contesto e aspettative della demo.
