@@ -94,6 +94,9 @@ MODEL_KEY_MAP = {
     "DeepAR (SD)": "deepar_sd",
     "ARIMA/SARIMA (EBS)": "arima_ebs",
 }
+MODEL_TAB_ORDER = ["deepar_f110", "deepar_sd", "arima_ebs"]
+TAB_TITLES = list(MODEL_DISPLAY_NAMES)
+TAB_INDEX = {key: idx for idx, key in enumerate(MODEL_TAB_ORDER)}
 DATASET_REGISTRY: dict[str, dict[str, Any]] = {
     "deepar_sd": {
         "label": "Mock SD (vendite)",
@@ -160,6 +163,61 @@ USECASE_COPY: dict[str, dict[str, Any]] = {
         ],
         "sap_tables": "Tabelle SAP: FEBKO, FEBEP",
     },
+}
+USECASE_HERO: dict[str, dict[str, str]] = {
+    "deepar_sd": {
+        "scope": "Prevediamo le vendite per SKU×Cliente×Area con incertezza p10–p90.",
+        "sap": "VBRK/VBRP, VBAK/VBAP, KONV, KNA1/KNVV, MARA/MARC",
+        "fields": "item_id (SKU|Cliente|Area), timestamp, target, promo_flag, price_idx",
+    },
+    "deepar_f110": {
+        "scope": "Prevediamo il cash-out di ciascun run F110 (mar/ven).",
+        "sap": "BSIK/BSAK, BSEG (ZFBDT,ZTERM,NETDT), BKPF, T001",
+        "fields": "item_id (CC|Banca), timestamp, target, run_flag, volume_due_next_7d",
+    },
+    "arima_ebs": {
+        "scope": "Prevediamo quante righe FEBEP arrivano al giorno (workload EBS).",
+        "sap": "FEBKO (testata), FEBEP (righe)",
+        "fields": "item_id (Banca/Conto), timestamp, target",
+    },
+}
+COLUMN_ALIASES: dict[str, dict[str, str]] = {
+    "deepar_sd": {
+        "item_id": "Serie (SKU|Cliente|Area)",
+        "timestamp": "Data",
+        "target": "Vendite (€)",
+        "promo_flag": "Promozione (0/1)",
+        "price_idx": "Indice prezzo (rel.)",
+        "dow_sin": "Settimana (sin)",
+        "dow_cos": "Settimana (cos)",
+        "eom_flag": "Fine mese (0/1)",
+    },
+    "deepar_f110": {
+        "item_id": "Serie (CC|Banca)",
+        "timestamp": "Data",
+        "target": "Pagato nel run (€)",
+        "run_flag": "Giorno di run F110 (0/1)",
+        "volume_due_next_7d": "Fatture con NETDT ≤7g (€)",
+        "eom_flag": "Fine mese (0/1)",
+        "dow_sin": "Settimana (sin)",
+        "dow_cos": "Settimana (cos)",
+        "company_code": "Company code",
+        "bank_acct": "Conto bancario",
+    },
+    "arima_ebs": {
+        "item_id": "Serie (Banca/Conto)",
+        "timestamp": "Data",
+        "target": "Righe EBS/giorno (FEBEP)",
+    },
+}
+COLUMN_TIPS: dict[str, str] = {
+    "run_flag": "1 sui giorni di run programmati (es. martedì/venerdì).",
+    "volume_due_next_7d": "Somma importi con scadenza (NETDT) entro 7 giorni, da BSEG/ZTERM.",
+    "promo_flag": "Periodo promozionale attivo (1) / non attivo (0).",
+    "price_idx": "Indice relativo del prezzo (0.8–1.2).",
+    "eom_flag": "Fine mese (1) nei giorni di chiusura.",
+    "dow_sin": "Feature calendario (seno del giorno-settimana).",
+    "dow_cos": "Feature calendario (coseno del giorno-settimana).",
 }
 HORIZON_OPTIONS = (7, 30, 90)
 DEFAULT_HORIZON = 30
@@ -267,6 +325,52 @@ def render_sidebar() -> dict[str, Any]:
     }
 
 
+def _render_model_overview_tab(model_key: str) -> None:
+    if model_key == "deepar_f110":
+        st.markdown("**Focus:** cash-out su run F110 programmati (martedì/venerdì).")
+        st.markdown("**Covariate:** run_flag, volume_due_next_7d, calendario (sin/cos, eom).")
+        st.markdown(
+            "**Dati richiesti:** item_id, timestamp, target, company_code, bank_acct, run_flag, eom_flag, volume_due_next_7d."
+        )
+        st.markdown("**Output:** intervalli p10/p50/p90 sui soli giorni di run.")
+    elif model_key == "deepar_sd":
+        st.markdown("**Focus:** domanda commerciale SKU×Cliente in area SD.")
+        st.markdown("**Covariate:** promo_flag, price_idx più feature calendario.")
+        st.markdown(
+            "**Dati richiesti:** storico giornaliero con item_id, timestamp, target, sku, customer, area, promo_flag, price_idx."
+        )
+        st.markdown("**Output:** previsioni p10/p50/p90 per orizzonte selezionato.")
+    elif model_key == "arima_ebs":
+        st.markdown("**Focus:** carico FEBEP/FEBKO per banca (EBS).")
+        st.markdown("**Covariate:** modello statistico puro con fallback stagionale.")
+        st.markdown("**Dati richiesti:** item_id, timestamp, target (conteggi giornalieri).")
+        st.markdown("**Output:** barre storiche + fascia p10–p90 per pianificazione operativa.")
+    else:
+        st.caption("Seleziona un modello dalla sidebar per visualizzare il dettaglio use case.")
+
+
+def display_df(df: pd.DataFrame, model_key: str) -> pd.DataFrame:
+    aliases = COLUMN_ALIASES.get(model_key, {})
+    rename_map = {col: aliases.get(col, col) for col in df.columns}
+    return df.rename(columns=rename_map)
+
+
+def build_column_dictionary(df: pd.DataFrame, model_key: str) -> pd.DataFrame:
+    aliases = COLUMN_ALIASES.get(model_key, {})
+    rows: list[dict[str, str]] = []
+    for column in df.columns:
+        gui_label = aliases.get(column, column)
+        tooltip = COLUMN_TIPS.get(column, "—")
+        rows.append(
+            {
+                "GUI Label": gui_label,
+                "Colonna tecnica": column,
+                "Tooltip/Descrizione": tooltip,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def render_main_area(options: dict[str, Any]) -> None:
     """Compose the main panel with dataset selection and outputs."""
 
@@ -319,25 +423,16 @@ def render_main_area(options: dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
 
-    tab_f110, tab_sd, tab_ebs = st.tabs(["DeepAR (F110)", "DeepAR (SD)", "ARIMA/SARIMA (EBS)"])
+    tabs = st.tabs(TAB_TITLES)
+    active_index = int(st.session_state.get("active_tab_index", TAB_INDEX.get(options["model_key"], 0)))
+    active_index = max(0, min(active_index, len(tabs) - 1))
 
-    with tab_f110:
-        st.markdown("**Focus:** cash-out su run F110 programmati (martedì/venerdì).")
-        st.markdown("**Covariate:** run_flag, volume_due_next_7d, calendario (sin/cos, eom).")
-        st.markdown("**Dati richiesti:** item_id, timestamp, target, company_code, bank_acct, run_flag, eom_flag, volume_due_next_7d.")
-        st.markdown("**Output:** intervalli p10/p50/p90 sui soli giorni di run.")
-
-    with tab_sd:
-        st.markdown("**Focus:** domanda commerciale SKU×Cliente in area SD.")
-        st.markdown("**Covariate:** promo_flag, price_idx più feature calendario.")
-        st.markdown("**Dati richiesti:** storico giornaliero con item_id, timestamp, target, sku, customer, area, promo_flag, price_idx.")
-        st.markdown("**Output:** previsioni p10/p50/p90 per orizzonte selezionato.")
-
-    with tab_ebs:
-        st.markdown("**Focus:** carico FEBEP/FEBKO per banca (EBS).")
-        st.markdown("**Covariate:** modello statistico puro con fallback stagionale.")
-        st.markdown("**Dati richiesti:** item_id, timestamp, target (conteggi giornalieri).")
-        st.markdown("**Output:** barre storiche + fascia p10–p90 per pianificazione operativa.")
+    for idx, tab in enumerate(tabs):
+        with tab:
+            if idx == active_index:
+                _render_model_overview_tab(options["model_key"])
+            else:
+                st.caption("Seleziona il modello dalla sidebar per visualizzare questo pannello.")
 
     with st.expander("Assunzioni & limiti"):
         st.markdown("**Assunzioni:** {{ASSUNZIONI_TXT}}")
@@ -356,17 +451,28 @@ def render_main_area(options: dict[str, Any]) -> None:
     origin_label = st.session_state.get("dataset_origin_label", "Sorgente sconosciuta")
     st.caption(f"Origine: {origin_label} · Range: {date_min:%Y-%m-%d} → {date_max:%Y-%m-%d}")
 
+    hero_copy = USECASE_HERO.get(options["model_key"])
+    if hero_copy:
+        with st.container(border=True):
+            st.markdown(f"**Scope**: {hero_copy['scope']}")
+            st.markdown(f"**Tabelle SAP**: {hero_copy['sap']}")
+            st.markdown(f"**Campi principali**: {hero_copy['fields']}")
+
     usecase = USECASE_COPY.get(options["model_key"], {})
     title = usecase.get("title", "Use case")
     bullets = usecase.get("bullets", [])
     sap_tables = usecase.get("sap_tables")
-    with st.expander(title, expanded=True):
+    with st.expander(title, expanded=False):
         for bullet in bullets:
             st.markdown(f"• {bullet}")
         if sap_tables:
             st.caption(sap_tables)
         st.caption("Schema rilevato: " + ", ".join(sorted(map(str, dataset_df.columns.tolist()))))
-        st.dataframe(dataset_df.head(5), use_container_width=True)
+        preview_df = display_df(dataset_df.head(5), options["model_key"])
+        st.dataframe(preview_df, use_container_width=True)
+        dict_df = build_column_dictionary(dataset_df, options["model_key"])
+        st.caption("Dizionario campi (GUI → colonna tecnica)")
+        st.table(dict_df)
 
     event_columns = {"promo_flag", "due_flag", "event_flag"}
     st.session_state["has_events"] = bool(event_columns & set(dataset_df.columns))
@@ -401,6 +507,7 @@ def main() -> None:
     inject_brand_css()
     options = render_sidebar()
     st.session_state["selected_model_key"] = options["model_key"]
+    st.session_state["active_tab_index"] = TAB_INDEX.get(options["model_key"], 0)
     configure_logging(options["debug_mode"])
     LOGGER.info("Modello selezionato: %s | Horizon=%d", options["model_display"], options["horizon"])
     render_main_area(options)
@@ -771,13 +878,14 @@ def _render_outputs(
     is_sd = model_label == "deepar_sd"
     is_f110 = model_label == "deepar_f110"
     is_ebs = model_label == "arima_ebs"
+    sap_note: str | None = None
     if is_sd:
         _render_sd_use_case_panel(source_df)
     elif is_f110:
         _render_f110_use_case_panel(source_df)
-        st.caption("Tabelle SAP: BSIK/BSAK, BSEG (ZFBDT, ZTERM, NETDT/SK1DT/SK2DT), BKPF, T001")
+        sap_note = "Tabelle SAP: BSIK/BSAK, BSEG (ZFBDT,ZTERM,NETDT) · BKPF, T001"
     elif is_ebs:
-        st.caption("Tabelle SAP: FEBKO, FEBEP")
+        sap_note = "Tabelle SAP: FEBKO, FEBEP · campi: bank_acct, valuta, posting_date"
 
     display_name_by_key = {value: key for key, value in MODEL_KEY_MAP.items()}
 
@@ -805,14 +913,42 @@ def _render_outputs(
         metric_tooltip = "Errore medio assoluto sui conteggi giornalieri dell'holdout"
 
     if is_f110:
-        main_fig = viz.build_step_run_chart(all_actual, forecast_df, item_id=selected_item, events=events)
+        main_fig = viz.build_step_run_chart(
+            all_actual,
+            forecast_df,
+            item_id=selected_item,
+            events=events,
+            sap_note=sap_note,
+        )
         holdout_for_metrics = _filter_run_days(holdout_df)
     elif is_ebs:
-        main_fig = viz.build_count_bar_chart(all_actual, forecast_df, item_id=selected_item, events=events)
+        main_fig = viz.build_count_bar_chart(
+            all_actual,
+            forecast_df,
+            item_id=selected_item,
+            events=events,
+            sap_note=sap_note,
+        )
         holdout_for_metrics = holdout_df
     else:
-        main_fig = viz.build_forecast_chart(all_actual, forecast_df, item_id=selected_item, events=events)
+        main_fig = viz.build_forecast_chart(
+            all_actual,
+            forecast_df,
+            item_id=selected_item,
+            events=events,
+            sap_note=sap_note,
+        )
         holdout_for_metrics = holdout_df
+
+    LOGGER.debug(
+        "[CHK] item=%s | actual=%d pts | holdout=%d pts | forecast=%d pts",
+        selected_item,
+        len(all_actual.loc[all_actual["item_id"] == selected_item]) if not all_actual.empty else 0,
+        len(holdout_for_metrics.loc[holdout_for_metrics["item_id"] == selected_item])
+        if not holdout_for_metrics.empty
+        else 0,
+        len(forecast_df.loc[forecast_df["item_id"] == selected_item]) if not forecast_df.empty else 0,
+    )
 
     metrics = viz.compute_metrics(holdout_for_metrics, forecast_df) if not holdout_for_metrics.empty else pd.DataFrame()
     if is_ebs and not metrics.empty:
@@ -885,6 +1021,7 @@ def _render_outputs(
             selected_item=selected_item,
             quantile_messages=quantile_messages,
             display_name_by_key=display_name_by_key,
+            sap_note=sap_note,
         )
 
 
@@ -1199,6 +1336,7 @@ def _render_comparison_section(
     selected_item: str,
     quantile_messages: dict[str, str],
     display_name_by_key: dict[str, str],
+    sap_note: str | None = None,
 ) -> None:
     forecasts_for_chart: dict[str, pd.DataFrame] = {}
     for key, payload in comparison_payload.items():
@@ -1212,7 +1350,12 @@ def _render_comparison_section(
         st.info("Nessun forecast disponibile per il confronto.")
         return
 
-    comparison_fig = viz.build_comparison_chart(all_actual, forecasts_for_chart, item_id=selected_item)
+    comparison_fig = viz.build_comparison_chart(
+        all_actual,
+        forecasts_for_chart,
+        item_id=selected_item,
+        sap_note=sap_note,
+    )
     st.plotly_chart(comparison_fig, use_container_width=True)
 
     if len(forecasts_for_chart) == 1:
@@ -1246,6 +1389,11 @@ def _render_comparison_section(
             continue
 
         model_metrics = viz.compute_metrics(holdout_df, forecast)
+        if "item_id" not in model_metrics.columns:
+            if model_metrics.index.name == "item_id":
+                model_metrics = model_metrics.reset_index()
+            else:
+                model_metrics = model_metrics.assign(item_id=selected_item)
         row = model_metrics[model_metrics["item_id"] == selected_item]
         if row.empty:
             row = model_metrics.mean(numeric_only=True)

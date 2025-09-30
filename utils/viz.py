@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -10,7 +11,9 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.colors import hex_to_rgb
 
-from utils.theme import KT_GREY_STROKE, KT_ORANGE, KT_SUCCESS, PLOTLY_TEMPLATE
+from utils.theme import KT_GREY_STROKE, KT_ORANGE, KT_SUCCESS, KT_TEXT_MUTED, PLOTLY_TEMPLATE
+
+LOGGER = logging.getLogger("k_forecast.viz")
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,10 @@ class EventBand:
 REQUIRED_FORECAST_COLUMNS = ("item_id", "timestamp", "p10", "p50", "p90")
 
 
+def _dt_array(s: pd.Series) -> np.ndarray:
+    return np.array(pd.to_datetime(s))
+
+
 def build_count_bar_chart(
     actual: pd.DataFrame,
     forecast: pd.DataFrame,
@@ -30,14 +37,21 @@ def build_count_bar_chart(
     events: Sequence[EventBand] | None = None,
     bar_name: str = "Righe FEBEP",
     freq: str | None = "D",
+    sap_note: str | None = None,
 ) -> go.Figure:
     """Render a bar + fan chart tailored for EBS daily counts."""
 
     _validate_columns(actual, {"item_id", "timestamp", "target"}, name="actual")
     _validate_columns(forecast, set(REQUIRED_FORECAST_COLUMNS), name="forecast")
 
-    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp")
-    forecast_series = forecast[forecast["item_id"] == item_id].sort_values("timestamp")
+    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp").copy()
+    forecast_series = forecast[forecast["item_id"] == item_id].sort_values("timestamp").copy()
+
+    actual_series["timestamp"] = pd.to_datetime(actual_series["timestamp"])
+    forecast_series["timestamp"] = pd.to_datetime(forecast_series["timestamp"])
+
+    x_a = _dt_array(actual_series["timestamp"]) if not actual_series.empty else np.array([])
+    x_f = _dt_array(forecast_series["timestamp"]) if not forecast_series.empty else np.array([])
 
     if actual_series.empty and forecast_series.empty:
         raise ValueError(f"No data available for item_id='{item_id}'")
@@ -47,8 +61,8 @@ def build_count_bar_chart(
     if not actual_series.empty:
         fig.add_trace(
             go.Bar(
-                x=actual_series["timestamp"],
-                y=actual_series["target"],
+                x=x_a,
+                y=actual_series["target"].astype(float),
                 name=bar_name,
                 marker_color=_hex_to_rgba(KT_GREY_STROKE, 0.85),
                 hovertemplate="%{x|%Y-%m-%d}: %{y:,} righe<extra></extra>",
@@ -58,7 +72,7 @@ def build_count_bar_chart(
     if not forecast_series.empty:
         fig.add_trace(
             go.Scatter(
-                x=forecast_series["timestamp"],
+                x=x_f,
                 y=forecast_series["p90"],
                 mode="lines",
                 line=dict(width=0, color="rgba(0,0,0,0)"),
@@ -68,19 +82,19 @@ def build_count_bar_chart(
         )
         fig.add_trace(
             go.Scatter(
-                x=forecast_series["timestamp"],
+                x=x_f,
                 y=forecast_series["p10"],
                 mode="lines",
                 fill="tonexty",
                 fillcolor=_hex_to_rgba(KT_ORANGE, 0.20),
                 line=dict(width=0, color="rgba(0,0,0,0)"),
-                name="Banda p10-p90",
+                name="Banda p10–p90",
                 hovertemplate="%{x|%Y-%m-%d}: %{y:,}<extra></extra>",
             )
         )
         fig.add_trace(
             go.Scatter(
-                x=forecast_series["timestamp"],
+                x=x_f,
                 y=forecast_series["p50"],
                 mode="lines+markers",
                 name="Forecast p50",
@@ -121,6 +135,17 @@ def build_count_bar_chart(
         barmode="overlay",
     )
 
+    if sap_note:
+        fig.add_annotation(
+            text=sap_note,
+            xref="paper",
+            yref="paper",
+            x=0,
+            y=1.15,
+            showarrow=False,
+            font=dict(size=11, color=KT_TEXT_MUTED),
+        )
+
     if freq:
         fig.update_xaxes(type="date")
 
@@ -133,14 +158,21 @@ def build_forecast_chart(
     *,
     item_id: str,
     events: Sequence[EventBand] | None = None,
+    sap_note: str | None = None,
 ) -> go.Figure:
     """Create a Plotly figure comparing actuals and forecast quantiles."""
 
     _validate_columns(actual, {"item_id", "timestamp", "target"}, name="actual")
     _validate_columns(forecast, set(REQUIRED_FORECAST_COLUMNS), name="forecast")
 
-    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp")
-    forecast_series = forecast[forecast["item_id"] == item_id].sort_values("timestamp")
+    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp").copy()
+    forecast_series = forecast[forecast["item_id"] == item_id].sort_values("timestamp").copy()
+
+    actual_series["timestamp"] = pd.to_datetime(actual_series["timestamp"])
+    forecast_series["timestamp"] = pd.to_datetime(forecast_series["timestamp"])
+
+    x_actual = _dt_array(actual_series["timestamp"]) if not actual_series.empty else np.array([])
+    x_forecast = _dt_array(forecast_series["timestamp"]) if not forecast_series.empty else np.array([])
 
     if actual_series.empty and forecast_series.empty:
         raise ValueError(f"No data available for item_id='{item_id}'")
@@ -150,7 +182,7 @@ def build_forecast_chart(
     if not actual_series.empty:
         fig.add_trace(
             go.Scatter(
-                x=actual_series["timestamp"],
+                x=x_actual,
                 y=actual_series["target"],
                 mode="lines+markers",
                 name="Actual",
@@ -162,7 +194,7 @@ def build_forecast_chart(
     if not forecast_series.empty:
         fig.add_trace(
             go.Scatter(
-                x=forecast_series["timestamp"],
+                x=x_forecast,
                 y=forecast_series["p50"],
                 mode="lines",
                 name="Forecast p50",
@@ -171,7 +203,7 @@ def build_forecast_chart(
         )
         fig.add_trace(
             go.Scatter(
-                x=forecast_series["timestamp"],
+                x=x_forecast,
                 y=forecast_series["p90"],
                 mode="lines",
                 line=dict(width=0, color="rgba(0,0,0,0)"),
@@ -181,7 +213,7 @@ def build_forecast_chart(
         )
         fig.add_trace(
             go.Scatter(
-                x=forecast_series["timestamp"],
+                x=x_forecast,
                 y=forecast_series["p10"],
                 mode="lines",
                 fill="tonexty",
@@ -228,6 +260,17 @@ def build_forecast_chart(
         ),
     )
 
+    if sap_note:
+        fig.add_annotation(
+            text=sap_note,
+            xref="paper",
+            yref="paper",
+            x=0,
+            y=1.15,
+            showarrow=False,
+            font=dict(size=11, color=KT_TEXT_MUTED),
+        )
+
     fig.update_xaxes(
         rangeselector=dict(
             bgcolor=_hex_to_rgba(KT_GREY_STROKE, 0.35),
@@ -251,6 +294,7 @@ def build_comparison_chart(
     forecasts: dict[str, pd.DataFrame],
     *,
     item_id: str,
+    sap_note: str | None = None,
 ) -> go.Figure:
     """Render comparison of model medians for a single item."""
 
@@ -258,11 +302,14 @@ def build_comparison_chart(
 
     fig = go.Figure()
 
-    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp")
+    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp").copy()
+    actual_series["timestamp"] = pd.to_datetime(actual_series["timestamp"])
+    x_actual = _dt_array(actual_series["timestamp"]) if not actual_series.empty else np.array([])
+
     if not actual_series.empty:
         fig.add_trace(
             go.Scatter(
-                x=actual_series["timestamp"],
+                x=x_actual,
                 y=actual_series["target"],
                 mode="lines",
                 name="Actual",
@@ -272,12 +319,14 @@ def build_comparison_chart(
 
     for model_name, forecast in forecasts.items():
         _validate_columns(forecast, set(REQUIRED_FORECAST_COLUMNS), name=f"forecast[{model_name}]")
-        series = forecast[forecast["item_id"] == item_id].sort_values("timestamp")
+        series = forecast[forecast["item_id"] == item_id].sort_values("timestamp").copy()
         if series.empty:
             continue
+        series["timestamp"] = pd.to_datetime(series["timestamp"])
+        x_forecast = _dt_array(series["timestamp"])
         fig.add_trace(
             go.Scatter(
-                x=series["timestamp"],
+                x=x_forecast,
                 y=series["p50"],
                 mode="lines",
                 name=model_name,
@@ -294,6 +343,17 @@ def build_comparison_chart(
         legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
     )
 
+    if sap_note:
+        fig.add_annotation(
+            text=sap_note,
+            xref="paper",
+            yref="paper",
+            x=0,
+            y=1.15,
+            showarrow=False,
+            font=dict(size=11, color=KT_TEXT_MUTED),
+        )
+
     fig.update_xaxes(type="date")
     return fig
 
@@ -304,79 +364,95 @@ def build_step_run_chart(
     *,
     item_id: str,
     events: Sequence[EventBand] | None = None,
+    sap_note: str | None = None,
 ) -> go.Figure:
     """Render step-style forecast focussed on payment run days only."""
 
     _validate_columns(actual, {"item_id", "timestamp", "target"}, name="actual")
     _validate_columns(forecast, set(REQUIRED_FORECAST_COLUMNS), name="forecast")
 
-    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp")
-    forecast_series = forecast[forecast["item_id"] == item_id].sort_values("timestamp")
+    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp").copy()
+    forecast_series = forecast[forecast["item_id"] == item_id].sort_values("timestamp").copy()
+
+    actual_series["timestamp"] = pd.to_datetime(actual_series["timestamp"])
+    forecast_series["timestamp"] = pd.to_datetime(forecast_series["timestamp"])
 
     if actual_series.empty and forecast_series.empty:
         raise ValueError(f"No data available for item_id='{item_id}'")
 
-    def _run_mask(df: pd.DataFrame, *, value_col: str, flag_col: str = "run_flag") -> pd.Series:
-        mask = pd.Series(False, index=df.index)
-        if value_col in df.columns:
-            mask |= pd.to_numeric(df[value_col], errors="coerce").fillna(0.0) > 0
-        if flag_col in df.columns:
-            mask |= df[flag_col].astype(int) == 1
-        return mask
+    if "run_flag" in actual_series.columns:
+        run_wd = (
+            sorted(
+                actual_series.loc[actual_series["run_flag"].astype(int) == 1, "timestamp"]
+                .dt.weekday.unique()
+                .tolist()
+            )
+            or [1, 4]
+        )
+    else:
+        run_wd = [1, 4]
 
-    actual_runs = actual_series[_run_mask(actual_series, value_col="target")]
-    forecast_runs = forecast_series[_run_mask(forecast_series, value_col="p50")]
+    mask_a = actual_series["timestamp"].dt.weekday.isin(run_wd)
+    mask_f = forecast_series["timestamp"].dt.weekday.isin(run_wd)
+
+    actual_runs = actual_series.loc[mask_a]
+    forecast_runs = forecast_series.loc[mask_f]
+
+    x_forecast_runs = _dt_array(forecast_runs["timestamp"]) if not forecast_runs.empty else np.array([])
+    x_actual_runs = _dt_array(actual_runs["timestamp"]) if not actual_runs.empty else np.array([])
+
+    if LOGGER.isEnabledFor(logging.DEBUG):
+        LOGGER.debug(
+            "[CHK][F110] item=%s | forecast_run=%d | forecast_skip=%d",
+            item_id,
+            len(forecast_runs),
+            len(forecast_series) - len(forecast_runs),
+        )
 
     fig = go.Figure()
 
+    if not forecast_runs.empty and {"p10", "p90"}.issubset(forecast_runs.columns):
+        fig.add_scatter(
+            x=x_forecast_runs,
+            y=forecast_runs["p90"],
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+            line_shape="hv",
+        )
+        fig.add_scatter(
+            x=x_forecast_runs,
+            y=forecast_runs["p10"],
+            mode="lines",
+            fill="tonexty",
+            fillcolor=_hex_to_rgba(KT_ORANGE, 0.18),
+            line=dict(width=0),
+            name="Banda p10-p90",
+            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
+            line_shape="hv",
+        )
+
     if not forecast_runs.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=forecast_runs["timestamp"],
-                y=forecast_runs["p90"],
-                mode="lines",
-                line=dict(width=0, color="rgba(0,0,0,0)"),
-                showlegend=False,
-                hoverinfo="skip",
-                line_shape="hv",
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=forecast_runs["timestamp"],
-                y=forecast_runs["p10"],
-                mode="lines",
-                fill="tonexty",
-                fillcolor=_hex_to_rgba(KT_ORANGE, 0.18),
-                line=dict(width=0, color="rgba(0,0,0,0)"),
-                name="Banda p10-p90",
-                hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
-                line_shape="hv",
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=forecast_runs["timestamp"],
-                y=forecast_runs["p50"],
-                mode="lines+markers",
-                name="Forecast p50",
-                line=dict(color=KT_ORANGE, width=3),
-                marker=dict(size=8, color=KT_ORANGE, symbol="square"),
-                hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
-                line_shape="hv",
-            )
+        fig.add_scatter(
+            x=x_forecast_runs,
+            y=forecast_runs["p50"],
+            mode="lines+markers",
+            name="Forecast p50",
+            line=dict(color=KT_ORANGE, width=3),
+            marker=dict(size=8, color=KT_ORANGE, symbol="square"),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
+            line_shape="hv",
         )
 
     if not actual_runs.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=actual_runs["timestamp"],
-                y=actual_runs["target"],
-                mode="markers",
-                name="Pagamenti",
-                marker=dict(size=10, color=KT_SUCCESS, symbol="circle", line=dict(width=1, color="white")),
-                hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
-            )
+        fig.add_scatter(
+            x=x_actual_runs,
+            y=actual_runs["target"],
+            mode="markers",
+            name="Pagamenti",
+            marker=dict(size=10, color=KT_SUCCESS, symbol="circle", line=dict(width=1, color="white")),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
         )
 
     if events:
@@ -407,6 +483,17 @@ def build_step_run_chart(
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
     )
+
+    if sap_note:
+        fig.add_annotation(
+            text=sap_note,
+            xref="paper",
+            yref="paper",
+            x=0,
+            y=1.15,
+            showarrow=False,
+            font=dict(size=11, color=KT_TEXT_MUTED),
+        )
 
     fig.update_xaxes(type="date")
 
