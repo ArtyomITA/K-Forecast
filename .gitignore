@@ -6,7 +6,7 @@ __pycache__/
 # AutoGluon model artifacts
 AutogluonModels/
 artifacts/
-
+lightning_logs/
 # Streamlit and Python local state
 .streamlit/
 .env

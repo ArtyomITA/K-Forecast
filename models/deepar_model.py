@@ -207,6 +207,33 @@ def train_and_predict_deepar(
     return forecast_df, metrics
 
 
+def train_and_predict_deepar_f110(
+    df_long: pd.DataFrame,
+    prediction_length: int,
+    freq: str,
+    **hparams: Any,
+) -> tuple[pd.DataFrame, Dict[str, float]]:
+    """DeepAR wrapper pre-configured for AP F110 runs."""
+
+    static_cols = ("company_code", "bank_acct")
+    dynamic_cols = ("run_flag", "volume_due_next_7d")
+    dyn_with_calendar = list(dynamic_cols) + ["dow_sin", "dow_cos", "eom_flag"]
+    LOGGER.info(
+        "[AP][F110] feat_static_cat=%s | dyn=%s",
+        list(static_cols),
+        dyn_with_calendar,
+    )
+    return train_and_predict_deepar(
+        df_long,
+        prediction_length,
+        freq,
+        use_covariates=True,
+        static_cols=static_cols,
+        dynamic_cols=dynamic_cols,
+        **hparams,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
@@ -268,9 +295,12 @@ def _prepare_dynamic_features(
 
     feature_names: list[str] = []
 
+    processed_dynamic: set[str] = set()
+
     if "promo_flag" in dynamic_cols:
         working["promo_flag"] = pd.to_numeric(working["promo_flag"], errors="coerce").fillna(0.0)
         feature_names.append("promo_flag")
+        processed_dynamic.add("promo_flag")
 
     if "price_idx" in dynamic_cols:
         if "sku" not in static_cols or "sku" not in working.columns:
@@ -286,6 +316,21 @@ def _prepare_dynamic_features(
         price_series = price_series.replace([np.inf, -np.inf], global_mean)
         working["price_idx_norm"] = price_series.groupby(working["sku"]).transform(_zscore_series)
         feature_names.append("price_idx_norm")
+        processed_dynamic.add("price_idx")
+
+    for col in dynamic_cols:
+        if col in processed_dynamic:
+            continue
+        if col not in working.columns:
+            continue
+        series = pd.to_numeric(working[col], errors="coerce")
+        if series.isna().all():
+            series = pd.Series(0.0, index=series.index)
+        else:
+            series = series.ffill().bfill().fillna(0.0)
+        working[col] = series.astype(float)
+        feature_names.append(col)
+        processed_dynamic.add(col)
 
     dow = working["timestamp"].dt.weekday.astype(float)
     working["dow_sin"] = np.sin(2 * np.pi * dow / 7.0)
@@ -450,4 +495,4 @@ def _forecasts_to_frame(df: pd.DataFrame, forecasts: Iterable, cfg: DeepARConfig
     return forecast_df
 
 
-__all__ = ["DeepARConfig", "train_and_predict_deepar"]
+__all__ = ["DeepARConfig", "train_and_predict_deepar", "train_and_predict_deepar_f110"]

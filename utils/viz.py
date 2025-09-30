@@ -22,6 +22,111 @@ class EventBand:
 REQUIRED_FORECAST_COLUMNS = ("item_id", "timestamp", "p10", "p50", "p90")
 
 
+def build_count_bar_chart(
+    actual: pd.DataFrame,
+    forecast: pd.DataFrame,
+    *,
+    item_id: str,
+    events: Sequence[EventBand] | None = None,
+    bar_name: str = "Righe FEBEP",
+    freq: str | None = "D",
+) -> go.Figure:
+    """Render a bar + fan chart tailored for EBS daily counts."""
+
+    _validate_columns(actual, {"item_id", "timestamp", "target"}, name="actual")
+    _validate_columns(forecast, set(REQUIRED_FORECAST_COLUMNS), name="forecast")
+
+    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp")
+    forecast_series = forecast[forecast["item_id"] == item_id].sort_values("timestamp")
+
+    if actual_series.empty and forecast_series.empty:
+        raise ValueError(f"No data available for item_id='{item_id}'")
+
+    fig = go.Figure()
+
+    if not actual_series.empty:
+        fig.add_trace(
+            go.Bar(
+                x=actual_series["timestamp"],
+                y=actual_series["target"],
+                name=bar_name,
+                marker_color=_hex_to_rgba(KT_GREY_STROKE, 0.85),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,} righe<extra></extra>",
+            )
+        )
+
+    if not forecast_series.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=forecast_series["timestamp"],
+                y=forecast_series["p90"],
+                mode="lines",
+                line=dict(width=0, color="rgba(0,0,0,0)"),
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=forecast_series["timestamp"],
+                y=forecast_series["p10"],
+                mode="lines",
+                fill="tonexty",
+                fillcolor=_hex_to_rgba(KT_ORANGE, 0.20),
+                line=dict(width=0, color="rgba(0,0,0,0)"),
+                name="Banda p10-p90",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,}<extra></extra>",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=forecast_series["timestamp"],
+                y=forecast_series["p50"],
+                mode="lines+markers",
+                name="Forecast p50",
+                line=dict(color=KT_ORANGE, width=3),
+                marker=dict(size=5, color=KT_ORANGE),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,} righe<extra></extra>",
+            )
+        )
+
+    if events:
+        for event in events:
+            fig.add_vrect(
+                x0=event.start,
+                x1=event.end,
+                fillcolor=_hex_to_rgba(KT_ORANGE, 0.10),
+                line=dict(color=_hex_to_rgba(KT_ORANGE, 0.4), width=1),
+                layer="below",
+                annotation=dict(
+                    text=event.label,
+                    textangle=270,
+                    font=dict(color=KT_ORANGE, size=11),
+                    x=event.start,
+                    xshift=-6,
+                    y=1,
+                    yref="paper",
+                    showarrow=False,
+                ),
+            )
+
+    y_axis_title = "Conteggi giornalieri"
+    fig.update_layout(
+        title=f"EBS workload · {item_id}",
+        xaxis_title="Data",
+        yaxis_title=y_axis_title,
+        template=PLOTLY_TEMPLATE,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified",
+        barmode="overlay",
+    )
+
+    if freq:
+        fig.update_xaxes(type="date")
+
+    return fig
+
+
 def build_forecast_chart(
     actual: pd.DataFrame,
     forecast: pd.DataFrame,
@@ -193,6 +298,121 @@ def build_comparison_chart(
     return fig
 
 
+def build_step_run_chart(
+    actual: pd.DataFrame,
+    forecast: pd.DataFrame,
+    *,
+    item_id: str,
+    events: Sequence[EventBand] | None = None,
+) -> go.Figure:
+    """Render step-style forecast focussed on payment run days only."""
+
+    _validate_columns(actual, {"item_id", "timestamp", "target"}, name="actual")
+    _validate_columns(forecast, set(REQUIRED_FORECAST_COLUMNS), name="forecast")
+
+    actual_series = actual[actual["item_id"] == item_id].sort_values("timestamp")
+    forecast_series = forecast[forecast["item_id"] == item_id].sort_values("timestamp")
+
+    if actual_series.empty and forecast_series.empty:
+        raise ValueError(f"No data available for item_id='{item_id}'")
+
+    def _run_mask(df: pd.DataFrame, *, value_col: str, flag_col: str = "run_flag") -> pd.Series:
+        mask = pd.Series(False, index=df.index)
+        if value_col in df.columns:
+            mask |= pd.to_numeric(df[value_col], errors="coerce").fillna(0.0) > 0
+        if flag_col in df.columns:
+            mask |= df[flag_col].astype(int) == 1
+        return mask
+
+    actual_runs = actual_series[_run_mask(actual_series, value_col="target")]
+    forecast_runs = forecast_series[_run_mask(forecast_series, value_col="p50")]
+
+    fig = go.Figure()
+
+    if not forecast_runs.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=forecast_runs["timestamp"],
+                y=forecast_runs["p90"],
+                mode="lines",
+                line=dict(width=0, color="rgba(0,0,0,0)"),
+                showlegend=False,
+                hoverinfo="skip",
+                line_shape="hv",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=forecast_runs["timestamp"],
+                y=forecast_runs["p10"],
+                mode="lines",
+                fill="tonexty",
+                fillcolor=_hex_to_rgba(KT_ORANGE, 0.18),
+                line=dict(width=0, color="rgba(0,0,0,0)"),
+                name="Banda p10-p90",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
+                line_shape="hv",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=forecast_runs["timestamp"],
+                y=forecast_runs["p50"],
+                mode="lines+markers",
+                name="Forecast p50",
+                line=dict(color=KT_ORANGE, width=3),
+                marker=dict(size=8, color=KT_ORANGE, symbol="square"),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
+                line_shape="hv",
+            )
+        )
+
+    if not actual_runs.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=actual_runs["timestamp"],
+                y=actual_runs["target"],
+                mode="markers",
+                name="Pagamenti",
+                marker=dict(size=10, color=KT_SUCCESS, symbol="circle", line=dict(width=1, color="white")),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
+            )
+        )
+
+    if events:
+        for event in events:
+            fig.add_vrect(
+                x0=event.start,
+                x1=event.end,
+                fillcolor=_hex_to_rgba(KT_ORANGE, 0.10),
+                line=dict(color=_hex_to_rgba(KT_ORANGE, 0.4), width=1),
+                layer="below",
+                annotation=dict(
+                    text=event.label,
+                    textangle=270,
+                    font=dict(color=KT_ORANGE, size=11),
+                    x=event.start,
+                    xshift=-6,
+                    y=1,
+                    yref="paper",
+                    showarrow=False,
+                ),
+            )
+
+    fig.update_layout(
+        title=f"F110 payout runs · {item_id}",
+        xaxis_title="Data di run",
+        yaxis_title="€ pagati",
+        template=PLOTLY_TEMPLATE,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
+    )
+
+    fig.update_xaxes(type="date")
+
+    return fig
+
+
 def summarise_quantiles(forecast: pd.DataFrame) -> pd.DataFrame:
     """Return tidy quantile snapshot sorted by item and timestamp."""
 
@@ -235,6 +455,37 @@ def compute_metrics(actual: pd.DataFrame, forecast: pd.DataFrame) -> pd.DataFram
         )
 
     return pd.DataFrame(metrics)
+
+
+def compute_count_metrics(
+    actual: pd.DataFrame,
+    forecast: pd.DataFrame,
+    *,
+    seasonal_period: int = 7,
+) -> pd.DataFrame:
+    """Compute MAE and optional MASE for daily count series."""
+
+    _validate_columns(actual, {"item_id", "timestamp", "target"}, name="actual")
+    _validate_columns(forecast, set(REQUIRED_FORECAST_COLUMNS), name="forecast")
+
+    merged = pd.merge(actual, forecast, on=["item_id", "timestamp"], how="inner")
+
+    rows: list[dict[str, Any]] = []
+    for item_id, group in merged.groupby("item_id"):
+        y_true = group["target"].to_numpy(dtype=float)
+        y_pred = group["p50"].to_numpy(dtype=float)
+        mae = float(np.mean(np.abs(y_true - y_pred)))
+
+        mase_denominator = None
+        if len(y_true) > seasonal_period:
+            seasonal_naive = y_true[:-seasonal_period]
+            shifted = y_true[seasonal_period:]
+            mase_denominator = float(np.mean(np.abs(shifted - seasonal_naive)))
+
+        mase = float(mae / mase_denominator) if mase_denominator and mase_denominator > 1e-8 else float("nan")
+        rows.append({"item_id": item_id, "MAE": mae, "MASE": mase})
+
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------

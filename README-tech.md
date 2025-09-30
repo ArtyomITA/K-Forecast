@@ -20,10 +20,10 @@ note d'implementazione più recenti.
 
 ## Stack e prerequisiti
 
-- **Python 3.10 – 3.12** (supporto verificato). Python 3.13 non è attualmente
-  compatibile con AutoGluon/Chronos per assenza del wheel `tf-keras`.
+- **Python 3.10 – 3.12** (supporto verificato). Python 3.13 non è ancora
+  validato con la pipeline DeepAR/Lightning.
 - **Streamlit 1.37+** per l'interfaccia.
-- **AutoGluon TimeSeries**, **GluonTS**, **PyTorch**, **Plotly** come dipendenze
+- **GluonTS**, **PyTorch Lightning**, **statsmodels**, **Plotly** come dipendenze
   principali (pin disponibili in `requirements.txt`).
 - Sistema operativo testato: Windows 11, macOS Sonoma, Ubuntu 22.04.
 
@@ -67,15 +67,17 @@ K-Forecast/
 ├── assets/
 │   └── app.css             # Tema Keytech, caricato dinamicamente
 ├── models/
-│   ├── ag_automl_model.py  # Wrapper AutoGluon TimeSeries
-│   ├── chronos_model.py    # Wrapper Chronos-Bolt
-│   └── deepar_model.py     # Pipeline DeepAR (Lightning)
+│   ├── arima_model.py      # Wrapper ARIMA/SARIMA per EBS
+│   ├── deepar_model.py     # Pipeline DeepAR (Lightning) per SD e F110
+│   ├── ag_automl_model.py  # Wrapper AutoGluon legacy (disabilitato in UI)
+│   └── chronos_model.py    # Wrapper Chronos-Bolt legacy (disabilitato in UI)
 ├── utils/
 │   ├── theme.py            # Palette brand e template Plotly
 │   └── viz.py              # Grafici, metriche, badge e download CSV
 ├── data/                   # Dataset mock e file demo
 ├── scripts/
-│   ├── generate_mock_bank_flows.py
+│   ├── generate_mock_f110_payouts.py
+│   ├── generate_mock_ebs_counts.py
 │   └── generate_mock_sd_sales.py
 ├── requirements.txt
 └── README.md / README-tech.md
@@ -97,12 +99,13 @@ K-Forecast/
 
 | Modello | Libreria | Note operative |
 |---------|----------|----------------|
-| Chronos-Bolt | AutoGluon TimeSeries | Inference zero-shot con quantili 0.1/0.5/0.9. `TRANSFORMERS_NO_TF=1` impostato per evitare dipendenza TensorFlow. |
-| DeepAR | GluonTS / PyTorch Lightning | Training locale con early stopping (`patience=5`), supporto covariate statiche e dinamiche, esportazione quantili multipli. |
-| AutoML (AG-TS) | AutoGluon TimeSeries | Leaderboard completa, armonizzazione automatica quantili; fallback duplicando `p50` se `p10/p90` assenti. |
+| DeepAR (SD) | GluonTS / PyTorch Lightning | Covariate dinamiche (promo_flag, price_idx) e feature calendario (sin/cos, eom). |
+| DeepAR (F110) | GluonTS / PyTorch Lightning | Run programmati martedì/venerdì con covariate run_flag e volume_due_next_7d. |
+| ARIMA/SARIMA (EBS) | statsmodels | Auto-selezione p/d/q con controllo stagionalità settimanale; output p10/p50/p90 sintetizzato dal residuo. |
 
 I forecast vengono normalizzati su tre colonne `p10`, `p50`, `p90` per uniformare
-la UI.
+la UI. I wrapper Chronos/AutoML restano nel repository ma non sono caricati nella
+versione demo.
 
 ## Gestione dataset e mock
 
@@ -111,11 +114,13 @@ la UI.
 - **Upload CSV**: convalida sulle colonne `item_id`, `timestamp`, `target`; il
   formato datetime viene inferito e normalizzato a frequenza giornaliera.
 - **Mock generator**:
-  - `python scripts/generate_mock_bank_flows.py`
+  - `python scripts/generate_mock_f110_payouts.py`
   - `python scripts/generate_mock_sd_sales.py`
+  - `python scripts/generate_mock_ebs_counts.py`
 
-Entrambi generano output sotto `data/` e sono utilizzati rispettivamente per i
-casi Tesoreria e Retail promo.
+Gli script salvano i CSV in `data/` e coprono i casi Tesoreria, Retail promo ed
+elaborazioni giornaliere EBS. Il vecchio `generate_mock_bank_flows.py` resta come
+reference per scenari legacy Chronos.
 
 ## Interfaccia utente e branding
 
@@ -149,9 +154,9 @@ casi Tesoreria e Retail promo.
 
 | Problema | Soluzione |
 |----------|-----------|
-| `ModuleNotFoundError: tf_keras` | Utilizzare Python ≤ 3.12 e assicurarsi che `TRANSFORMERS_NO_TF=1` rimanga settato (gestito in app). |
-| Grafico vuoto dopo upload CSV | Verificare colonne richieste e presenza di dati nell'orizzonte scelto. |
-| Messaggio "Quantili mancanti" in AutoML | Alcuni modelli restituiscono solo `median`; l'app replica `p50` sui quantili mancanti. |
+| `ModuleNotFoundError: statsmodels` | Installare le dependences con `pip install -r requirements.txt` (statsmodels è obbligatoria per ARIMA). |
+| Grafico vuoto dopo upload CSV | Verificare colonne richieste e presenza di dati nell'orizzonte selezionato; il log riporta eventuali colonne mancanti. |
+| Metriche NaN nel pannello KPI | Controllare che il dataset copra almeno 30 giorni utili; in caso contrario ridurre l'orizzonte o aumentare lo storico. |
 | Stile non applicato | Verificare esistenza di `assets/app.css`; in caso di assenza il log avverte e il fallback è il tema Streamlit standard. |
 
 ## Roadmap tecnica
@@ -162,5 +167,5 @@ casi Tesoreria e Retail promo.
 
 ---
 
-Ultimo aggiornamento: settembre 2025 (include estrazione CSS in `assets/app.css`
-e registri dataset centralizzati in `app.py`).
+Ultimo aggiornamento: ottobre 2025 (allineamento lineup DeepAR F110/SD e ARIMA EBS,
+mock generator aggiornati e dismissione wrapper Chronos/AutoML dalla UI).

@@ -1,10 +1,10 @@
-"""Minimal Streamlit UI that unifies Chronos-Bolt, DeepAR and AutoML (AG-TS).
+"""Streamlit UI showcasing DeepAR (SD), DeepAR (F110) and ARIMA/SARIMA (EBS).
 
 The app exposes the three forecasting wrappers behind a compact interface:
 
 * Sidebar → model selection, forecast horizon and debug logging toggle.
 * Main view → dataset source choice, upload handling, execution trigger and
-  visual/metric output.
+    visual/metric output.
 
 Edge cases such as irregular timestamps and missing quantiles are handled with
 forward-filling resampling and informative degradations so that the app can
@@ -28,9 +28,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from models.ag_automl_model import fit_predict_agts
-from models.chronos_model import predict_chronos
-from models.deepar_model import train_and_predict_deepar
+from models.arima_model import fit_predict_arima_ebs
+from models.deepar_model import train_and_predict_deepar, train_and_predict_deepar_f110
 from utils import viz
 from utils.viz import EventBand
 from utils.theme import (
@@ -85,14 +84,18 @@ def inject_brand_css() -> None:
 # ---------------------------------------------------------------------------
 # Application-wide constants
 # ---------------------------------------------------------------------------
-MODEL_DISPLAY_NAMES = ("Chronos-Bolt", "DeepAR", "AutoML (AG-TS)")
+MODEL_DISPLAY_NAMES = (
+    "DeepAR (F110)",
+    "DeepAR (SD)",
+    "ARIMA/SARIMA (EBS)",
+)
 MODEL_KEY_MAP = {
-    "Chronos-Bolt": "chronos",
-    "DeepAR": "deepar",
-    "AutoML (AG-TS)": "automl",
+    "DeepAR (F110)": "deepar_f110",
+    "DeepAR (SD)": "deepar_sd",
+    "ARIMA/SARIMA (EBS)": "arima_ebs",
 }
 DATASET_REGISTRY: dict[str, dict[str, Any]] = {
-    "deepar": {
+    "deepar_sd": {
         "label": "Mock SD (vendite)",
         "path": "data/mock_sd_sales.csv",
         "expected": [
@@ -106,30 +109,32 @@ DATASET_REGISTRY: dict[str, dict[str, Any]] = {
             "price_idx",
         ],
     },
-    "chronos": {
-        "label": "Mock Cash (incassi)",
-        "path": "data/mock_bank_flows.csv",
+    "deepar_f110": {
+        "label": "Mock F110 (cash-out)",
+        "path": "data/mock_f110_payouts.csv",
         "expected": [
             "item_id",
             "timestamp",
             "target",
+            "company_code",
+            "bank_acct",
+            "run_flag",
+            "eom_flag",
+            "volume_due_next_7d",
         ],
     },
-    "automl": {
-        "label": "Mock AP (pagamenti)",
-        "path": "data/mock_ap_payments.csv",
+    "arima_ebs": {
+        "label": "Mock EBS (conteggi)",
+        "path": "data/mock_ebs_counts.csv",
         "expected": [
             "item_id",
             "timestamp",
             "target",
-            "due_flag",
-            "supplier",
-            "company_code",
         ],
     },
 }
 USECASE_COPY: dict[str, dict[str, Any]] = {
-    "deepar": {
+    "deepar_sd": {
         "title": "Use case: Domanda commerciale (SD)",
         "bullets": [
             "Previsioni vendite SKU×Cliente×Area",
@@ -137,21 +142,23 @@ USECASE_COPY: dict[str, dict[str, Any]] = {
             "Output per serie con intervalli p10–p90",
         ],
     },
-    "chronos": {
-        "title": "Use case: Incassi AR (Tesoreria)",
+    "deepar_f110": {
+        "title": "Use case: Payment run F110 (AP)",
         "bullets": [
-            "Serie storiche di incasso giornaliero",
-            "Scenario rapido/zero-shot",
-            "Output con banda d'incertezza",
+            "Prevediamo il cash-out per ogni run (mar/ven)",
+            "Covariate: run_flag, volume_due_next_7d, calendario",
+            "Output su giorni-run con intervalli p10–p90",
         ],
+        "sap_tables": "Tabelle SAP: BSIK/BSAK, BSEG (ZFBDT, ZTERM, NETDT/SK1DT/SK2DT), BKPF, T001",
     },
-    "automl": {
-        "title": "Use case: Pagamenti AP (intermittenti)",
+    "arima_ebs": {
+        "title": "Use case: EBS workload (Bank Ops)",
         "bullets": [
-            "Serie con molti zeri e spike (MIRO/fornitori)",
-            "Regressori opzionali (due_flag, supplier)",
-            "Confronto modelli statistici",
+            "Conteggio righe FEBEP/FEBKO per banca",
+            "Stagionalità settimanale e picchi fine mese",
+            "Grafico a barre con banda p10–p90",
         ],
+        "sap_tables": "Tabelle SAP: FEBKO, FEBEP",
     },
 }
 HORIZON_OPTIONS = (7, 30, 90)
@@ -173,13 +180,6 @@ DEEPAR_DEFAULTS: dict[str, Any] = {
     "device": "cpu",
     "early_stop_patience": 5,
 }
-AUTOML_DEFAULTS: dict[str, Any] = {
-    "time_limit": 120,
-    "presets": "medium_quality",
-    "use_covariates": True,
-    "split_date": None,
-}
-
 LOGGER = logging.getLogger("k_forecast.app")
 
 
@@ -319,25 +319,25 @@ def render_main_area(options: dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
 
-    tab_chronos, tab_deepar, tab_automl = st.tabs(["Chronos-Bolt", "DeepAR", "AutoML"])
+    tab_f110, tab_sd, tab_ebs = st.tabs(["DeepAR (F110)", "DeepAR (SD)", "ARIMA/SARIMA (EBS)"])
 
-    with tab_chronos:
-        st.markdown("**Pro:** zero-shot veloce senza training locale.")
-        st.markdown("**Contro:** meno personalizzato sul singolo cliente.")
-        st.markdown("**Dati richiesti:** serie giornaliere con item_id, timestamp, target.")
-        st.markdown("**Output:** previsioni p10/p50/p90 sull'orizzonte scelto.")
+    with tab_f110:
+        st.markdown("**Focus:** cash-out su run F110 programmati (martedì/venerdì).")
+        st.markdown("**Covariate:** run_flag, volume_due_next_7d, calendario (sin/cos, eom).")
+        st.markdown("**Dati richiesti:** item_id, timestamp, target, company_code, bank_acct, run_flag, eom_flag, volume_due_next_7d.")
+        st.markdown("**Output:** intervalli p10/p50/p90 sui soli giorni di run.")
 
-    with tab_deepar:
-        st.markdown("**Pro:** apprende stagionalità e pattern specifici cliente.")
-        st.markdown("**Contro:** richiede fase di training e tempo maggiore.")
-        st.markdown("**Dati richiesti:** storico denso per ogni serie, frequenza giornaliera.")
-        st.markdown("**Output:** probabilità p10/p50/p90 allineate al modello sequenziale.")
+    with tab_sd:
+        st.markdown("**Focus:** domanda commerciale SKU×Cliente in area SD.")
+        st.markdown("**Covariate:** promo_flag, price_idx più feature calendario.")
+        st.markdown("**Dati richiesti:** storico giornaliero con item_id, timestamp, target, sku, customer, area, promo_flag, price_idx.")
+        st.markdown("**Output:** previsioni p10/p50/p90 per orizzonte selezionato.")
 
-    with tab_automl:
-        st.markdown("**Pro:** prova più famiglie di modelli e combina gli ensemble.")
-        st.markdown("**Contro:** tempi di esecuzione più alti del zero-shot.")
-        st.markdown("**Dati richiesti:** tabella long con item_id, timestamp, target opzionali covariate.")
-        st.markdown("**Output:** forecast aggregato con quantili e leaderboard interno.")
+    with tab_ebs:
+        st.markdown("**Focus:** carico FEBEP/FEBKO per banca (EBS).")
+        st.markdown("**Covariate:** modello statistico puro con fallback stagionale.")
+        st.markdown("**Dati richiesti:** item_id, timestamp, target (conteggi giornalieri).")
+        st.markdown("**Output:** barre storiche + fascia p10–p90 per pianificazione operativa.")
 
     with st.expander("Assunzioni & limiti"):
         st.markdown("**Assunzioni:** {{ASSUNZIONI_TXT}}")
@@ -359,9 +359,12 @@ def render_main_area(options: dict[str, Any]) -> None:
     usecase = USECASE_COPY.get(options["model_key"], {})
     title = usecase.get("title", "Use case")
     bullets = usecase.get("bullets", [])
+    sap_tables = usecase.get("sap_tables")
     with st.expander(title, expanded=True):
         for bullet in bullets:
             st.markdown(f"• {bullet}")
+        if sap_tables:
+            st.caption(sap_tables)
         st.caption("Schema rilevato: " + ", ".join(sorted(map(str, dataset_df.columns.tolist()))))
         st.dataframe(dataset_df.head(5), use_container_width=True)
 
@@ -409,7 +412,7 @@ def main() -> None:
 
 def handle_forecast(
     *,
-    model_key: Literal["chronos", "deepar", "automl"],
+    model_key: Literal["deepar_sd", "deepar_f110", "arima_ebs"],
     horizon: int,
     dataset_df: pd.DataFrame,
     freq: str,
@@ -436,30 +439,31 @@ def handle_forecast(
 
     start_time = time.perf_counter()
     try:
-        if model_key == "chronos":
-            forecast_raw = predict_chronos(
-                train_df,
-                horizon,
-                freq,
-                zero_shot=True,
-                do_finetune=False,
-                logger=LOGGER,
-            )
-        elif model_key == "deepar":
+        if model_key == "deepar_sd":
             forecast_raw, _training_metrics = train_and_predict_deepar(
                 dataset_df,
                 horizon,
                 freq,
                 use_covariates=True,
+                static_cols=("sku", "customer", "area"),
+                dynamic_cols=("promo_flag", "price_idx"),
                 **DEEPAR_DEFAULTS,
             )
-        else:  # automl
-            forecast_raw, _automl_metrics = fit_predict_agts(
+        elif model_key == "deepar_f110":
+            forecast_raw, _training_metrics = train_and_predict_deepar_f110(
                 dataset_df,
                 horizon,
                 freq,
-                **AUTOML_DEFAULTS,
+                **DEEPAR_DEFAULTS,
             )
+        elif model_key == "arima_ebs":
+            forecast_raw, _arima_metrics = fit_predict_arima_ebs(
+                dataset_df,
+                horizon,
+                freq,
+            )
+        else:
+            raise ValueError(f"Modello non supportato: {model_key}")
     except Exception as exc:  # pragma: no cover - Streamlit UI path
         LOGGER.exception("Forecast %s failed: %s", model_key, exc)
         st.error(
@@ -563,7 +567,7 @@ def _load_dataset_for_model(model_key: str) -> pd.DataFrame:
     cleaned = _validate_and_fix(df_mock, target_key, expected_cols=entry.get("expected"))
     st.session_state["dataset_origin_label"] = entry["label"]
 
-    if target_key == "deepar":
+    if target_key == "deepar_sd":
         _log_sd_mock_dataset(cleaned)
 
     return cleaned
@@ -635,7 +639,7 @@ def _validate_and_fix(
     if touched:
         st.caption("Timestamp irregolari rilevati: effettuato resample giornaliero (ffill).")
 
-    if model_key == "deepar":
+    if model_key in {"deepar_sd", "deepar_f110"}:
         dow = df_resampled["timestamp"].dt.weekday.astype(float)
         if "dow_sin" not in df_resampled.columns:
             df_resampled["dow_sin"] = np.sin(2 * np.pi * dow / 7.0)
@@ -643,9 +647,6 @@ def _validate_and_fix(
             df_resampled["dow_cos"] = np.cos(2 * np.pi * dow / 7.0)
         if "eom_flag" not in df_resampled.columns:
             df_resampled["eom_flag"] = df_resampled["timestamp"].dt.is_month_end.astype(int)
-    elif model_key == "automl":
-        if "due_flag" not in df_resampled.columns:
-            df_resampled["due_flag"] = 0
 
     LOGGER.info(
         "[DATA] model=%s | rows=%d | series=%d | missing=%s",
@@ -767,8 +768,16 @@ def _render_outputs(
         st.warning("Nessuna serie disponibile nelle previsioni.")
         return
 
-    if model_label == "deepar":
+    is_sd = model_label == "deepar_sd"
+    is_f110 = model_label == "deepar_f110"
+    is_ebs = model_label == "arima_ebs"
+    if is_sd:
         _render_sd_use_case_panel(source_df)
+    elif is_f110:
+        _render_f110_use_case_panel(source_df)
+        st.caption("Tabelle SAP: BSIK/BSAK, BSEG (ZFBDT, ZTERM, NETDT/SK1DT/SK2DT), BKPF, T001")
+    elif is_ebs:
+        st.caption("Tabelle SAP: FEBKO, FEBEP")
 
     display_name_by_key = {value: key for key, value in MODEL_KEY_MAP.items()}
 
@@ -778,10 +787,37 @@ def _render_outputs(
     )
     LOGGER.info("[INFO][UI] Render grafico: item=%s, horizon=%d", selected_item, horizon)
 
-    events = _generate_event_bands(all_actual, forecast_df, selected_item)
-    main_fig = viz.build_forecast_chart(all_actual, forecast_df, item_id=selected_item, events=events)
+    events = (
+        _generate_f110_event_bands(all_actual, forecast_df, selected_item)
+        if is_f110
+        else _generate_event_bands(all_actual, forecast_df, selected_item)
+    )
 
-    metrics = viz.compute_metrics(holdout_df, forecast_df) if not holdout_df.empty else pd.DataFrame()
+    metric_column = "MAPE"
+    metric_label = "MAPE"
+    metric_tooltip = "Errore percentuale medio (più basso = meglio)"
+    if is_f110:
+        metric_label = "MAPE (run)"
+        metric_tooltip = "Errore percentuale medio calcolato sui soli giorni di run F110"
+    if is_ebs:
+        metric_column = "MAE"
+        metric_label = "MAE (conteggi)"
+        metric_tooltip = "Errore medio assoluto sui conteggi giornalieri dell'holdout"
+
+    if is_f110:
+        main_fig = viz.build_step_run_chart(all_actual, forecast_df, item_id=selected_item, events=events)
+        holdout_for_metrics = _filter_run_days(holdout_df)
+    elif is_ebs:
+        main_fig = viz.build_count_bar_chart(all_actual, forecast_df, item_id=selected_item, events=events)
+        holdout_for_metrics = holdout_df
+    else:
+        main_fig = viz.build_forecast_chart(all_actual, forecast_df, item_id=selected_item, events=events)
+        holdout_for_metrics = holdout_df
+
+    metrics = viz.compute_metrics(holdout_for_metrics, forecast_df) if not holdout_for_metrics.empty else pd.DataFrame()
+    if is_ebs and not metrics.empty:
+        mae_df = viz.compute_count_metrics(holdout_for_metrics, forecast_df)
+        metrics = metrics.merge(mae_df[["item_id", "MAE"]], on="item_id", how="left")
     metrics_display = metrics.rename(
         columns={
             "item_id": "Serie",
@@ -796,18 +832,23 @@ def _render_outputs(
     )
 
     if selected_metrics is not None:
+        metric_value = float(selected_metrics.get(metric_column, float("nan")))
         LOGGER.info(
-            "[INFO][METRICS] MAPE=%.3f sMAPE=%.3f Coverage=%.2f",
-            selected_metrics["MAPE"],
+            "[INFO][METRICS] %s=%.3f sMAPE=%.3f Coverage=%.2f",
+            metric_label,
+            metric_value,
             selected_metrics["sMAPE"],
             selected_metrics["Copertura p10–p90"],
         )
+    else:
+        metric_value = float("nan")
 
     chips_html = _render_kpi_chips(
-        mape=float(selected_metrics["MAPE"]) if selected_metrics is not None else float("nan"),
+        metric_value=metric_value,
         coverage=float(selected_metrics["Copertura p10–p90"]) if selected_metrics is not None else float("nan"),
         horizon=horizon,
         series_count=len(available_items),
+        metric_label=metric_label,
     )
 
     with chart_placeholder.container():
@@ -815,6 +856,8 @@ def _render_outputs(
         st.plotly_chart(main_fig, use_container_width=True)
         if events and any(event.label == "PROMO" for event in events):
             st.caption("Bande PROMO = periodi promozionali considerati come covariata")
+        if is_f110:
+            st.caption("Metriche calcolate sui soli giorni di run F110 (mar/ven disponibili).")
 
     tab_single, tab_compare = st.tabs(["Singolo modello", "Confronto modelli"])
 
@@ -828,35 +871,48 @@ def _render_outputs(
             chart_fig=main_fig,
             selected_item=selected_item,
             coverage=float(selected_metrics["Copertura p10–p90"]) if selected_metrics is not None else float("nan"),
-            mape=float(selected_metrics["MAPE"]) if selected_metrics is not None else float("nan"),
+            metric_value=metric_value,
+            metric_label=metric_label,
+            metric_tooltip=metric_tooltip,
+            metric_column=metric_column,
         )
 
     with tab_compare:
         _render_comparison_section(
             all_actual=all_actual,
             comparison_payload=comparison_payload,
-            holdout_df=holdout_df,
+            holdout_df=holdout_for_metrics,
             selected_item=selected_item,
             quantile_messages=quantile_messages,
             display_name_by_key=display_name_by_key,
         )
 
 
-def _render_kpi_chips(*, mape: float, coverage: float, horizon: int, series_count: int) -> str:
+def _render_kpi_chips(
+    *,
+    metric_value: float,
+    coverage: float,
+    horizon: int,
+    series_count: int,
+    metric_label: str = "MAPE",
+) -> str:
     def _chip(label: str, value: str, tone: str | None = None) -> str:
         classes = ["kt-chip"]
         if tone:
             classes.append(f"kt-chip--{tone}")
         return f"<span class='{' '.join(classes)}'><span>{label}</span><span>{value}</span></span>"
 
-    def _tone_from_mape(value: float) -> str | None:
+    def _tone_from_metric(value: float) -> str | None:
         if math.isnan(value):
             return None
-        if value <= 10:
-            return "success"
-        if value <= 20:
-            return "warning"
-        return "danger"
+        label_upper = metric_label.upper()
+        if "MAPE" in label_upper:
+            if value <= 10:
+                return "success"
+            if value <= 20:
+                return "warning"
+            return "danger"
+        return None
 
     def _tone_from_coverage(value: float) -> str | None:
         if math.isnan(value):
@@ -867,11 +923,19 @@ def _render_kpi_chips(*, mape: float, coverage: float, horizon: int, series_coun
             return "warning"
         return "danger"
 
-    mape_display = "n/d" if math.isnan(mape) else f"{mape:.1f}%"
+    label_upper = metric_label.upper()
+    if math.isnan(metric_value):
+        metric_display = "n/d"
+    elif "MAPE" in label_upper:
+        metric_display = f"{metric_value:.1f}%"
+    elif "MAE" in label_upper:
+        metric_display = f"{metric_value:,.0f}"
+    else:
+        metric_display = f"{metric_value:.2f}"
     coverage_display = "n/d" if math.isnan(coverage) else f"{coverage:.1f}%"
 
     chips = [
-        _chip("MAPE", mape_display, _tone_from_mape(mape)),
+        _chip(metric_label, metric_display, _tone_from_metric(metric_value)),
         _chip("Coverage", coverage_display, _tone_from_coverage(coverage)),
         _chip("Orizzonte", f"{horizon}g"),
         _chip("Serie", str(series_count)),
@@ -890,13 +954,17 @@ def _render_single_model_section(
     chart_fig,
     selected_item: str,
     coverage: float,
-    mape: float,
+    metric_value: float,
+    metric_label: str,
+    metric_tooltip: str,
+    metric_column: str,
 ) -> None:
     with metrics_placeholder.container():
         if metrics_display.empty:
             st.info("Nessun holdout disponibile per il calcolo delle metriche.")
         else:
-            baseline = float(metrics_display["MAPE"].median(skipna=True)) if not metrics_display.empty else float("nan")
+            metric_series = metrics_display.get(metric_column)
+            baseline = float(metric_series.median(skipna=True)) if isinstance(metric_series, pd.Series) and not metric_series.empty else float("nan")
 
             def _info_header(label: str, tooltip: str) -> str:
                 return f"{label} <span class='kt-info' title=\"{tooltip}\">ℹ</span>"
@@ -910,6 +978,16 @@ def _render_single_model_section(
                 if pd.isna(value):
                     return "—"
                 return f"{value:.3f}"
+
+            def _format_primary(value: float) -> str:
+                if pd.isna(value):
+                    return "—"
+                label_upper = metric_label.upper()
+                if "MAPE" in label_upper:
+                    return f"{value:.2f}%"
+                if "MAE" in label_upper:
+                    return f"{value:,.0f}"
+                return f"{value:.2f}"
 
             def _trend_badge(value: float) -> str:
                 if pd.isna(value) or pd.isna(baseline) or baseline <= 0:
@@ -934,11 +1012,12 @@ def _render_single_model_section(
 
             table_rows = []
             for _, row in metrics_display.iterrows():
+                primary_value = row.get(metric_column, float("nan"))
                 table_rows.append(
                     {
                         "Serie": row["Serie"],
-                        "MAPE": _format_percent(row["MAPE"]),
-                        "Trend": _trend_badge(row["MAPE"]),
+                        metric_column: _format_primary(primary_value),
+                        "Trend": _trend_badge(primary_value),
                         "sMAPE": _format_percent(row["sMAPE"]),
                         "Pinball@0.1": _format_pinball(row["Pinball@0.1"]),
                         "Pinball@0.9": _format_pinball(row["Pinball@0.9"]),
@@ -948,7 +1027,7 @@ def _render_single_model_section(
 
             metrics_table = pd.DataFrame(table_rows, columns=[
                 "Serie",
-                "MAPE",
+                metric_column,
                 "Trend",
                 "sMAPE",
                 "Pinball@0.1",
@@ -957,7 +1036,7 @@ def _render_single_model_section(
             ])
             metrics_table.columns = [
                 "Serie",
-                _info_header("MAPE", "Errore % medio (più basso = meglio)"),
+                _info_header(metric_label, metric_tooltip),
                 "Trend",
                 _info_header("sMAPE", "Versione simmetrica della MAPE"),
                 _info_header("Pinball@0.1", "Accuratezza sui quantili (bassa = meglio)"),
@@ -979,7 +1058,8 @@ def _render_single_model_section(
 
     insight_text = _build_insight_text(
         item_id=selected_item,
-        mape=mape,
+        metric_value=metric_value,
+        metric_label=metric_label,
         coverage=coverage,
         peak_date=_estimate_risk_peak(forecast_df, selected_item),
     )
@@ -1057,6 +1137,58 @@ def _render_sd_use_case_panel(df: pd.DataFrame) -> None:
 
     table_df = pd.DataFrame(rows)
     st.table(table_df)
+
+
+def _render_f110_use_case_panel(df: pd.DataFrame) -> None:
+    bullet_html = """
+    <div class="kt-callout">
+        <h4>Use case: Pagamenti AP (F110)</h4>
+        <ul>
+            <li>Run programmati martedì/venerdì via transazione F110</li>
+            <li>Covariate dinamiche: <code>run_flag</code>, <code>volume_due_next_7d</code>, feature calendario</li>
+            <li>Covariate statiche: <code>company_code</code>, <code>bank_acct</code></li>
+            <li>Boost end-of-month e salti festivi gestiti nel mock</li>
+        </ul>
+    </div>
+    """
+    st.markdown(bullet_html, unsafe_allow_html=True)
+
+    columns_to_check = [
+        "company_code",
+        "bank_acct",
+        "run_flag",
+        "eom_flag",
+        "volume_due_next_7d",
+        "dow_sin",
+        "dow_cos",
+    ]
+    rows = []
+    for column in columns_to_check:
+        present = column in df.columns
+        example = ""
+        if present:
+            sample_value = df[column].dropna().astype(str).head(1).tolist()
+            example = sample_value[0] if sample_value else ""
+        rows.append({
+            "Colonna": column,
+            "Presente": "✅" if present else "—",
+            "Esempio": example,
+        })
+
+    table_df = pd.DataFrame(rows)
+    st.table(table_df)
+
+
+def _filter_run_days(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    working = df.copy()
+    mask = pd.Series(False, index=working.index)
+    if "target" in working.columns:
+        mask |= pd.to_numeric(working["target"], errors="coerce").fillna(0.0) > 0
+    if "run_flag" in working.columns:
+        mask |= working["run_flag"].astype(int) == 1
+    return working.loc[mask].copy()
 
 
 def _render_comparison_section(
@@ -1188,6 +1320,57 @@ def _render_comparison_section(
     st.markdown(table_html, unsafe_allow_html=True)
 
 
+def _generate_f110_event_bands(
+    all_actual: pd.DataFrame,
+    forecast_df: pd.DataFrame,
+    item_id: str,
+) -> list[EventBand]:
+    def _collect_timestamps() -> pd.Series:
+        actual_dates = (
+            all_actual[all_actual["item_id"] == item_id]["timestamp"]
+            if not all_actual.empty
+            else pd.Series(dtype="datetime64[ns]")
+        )
+        forecast_dates = forecast_df[forecast_df["item_id"] == item_id]["timestamp"]
+        return (
+            pd.concat([actual_dates, forecast_dates], ignore_index=True)
+            .dropna()
+            .sort_values()
+            .reset_index(drop=True)
+        )
+
+    combined = _collect_timestamps()
+    if combined.empty:
+        return []
+
+    diffs = combined.sort_values().diff().dropna()
+    if diffs.empty:
+        half_window = pd.Timedelta(hours=12)
+    else:
+        min_delta = diffs.min()
+        half_window = min_delta / 2 if isinstance(min_delta, pd.Timedelta) and min_delta > pd.Timedelta(0) else pd.Timedelta(hours=12)
+
+    item_actual = all_actual[all_actual["item_id"] == item_id].sort_values("timestamp") if not all_actual.empty else pd.DataFrame()
+    if item_actual.empty:
+        return []
+
+    events: list[EventBand] = []
+
+    if "eom_flag" in item_actual.columns:
+        eom_dates = pd.to_datetime(item_actual.loc[item_actual["eom_flag"].astype(int) == 1, "timestamp"], errors="coerce")
+        for ts in sorted({ts for ts in eom_dates.dropna()}):
+            events.append(EventBand(label="FINE MESE", start=ts - half_window, end=ts + half_window))
+
+    if "run_flag" in item_actual.columns:
+        candidate_mask = item_actual["timestamp"].dt.weekday.isin([1, 4])
+        skipped = item_actual.loc[candidate_mask & (item_actual["run_flag"].astype(int) == 0)]
+        skipped_dates = pd.to_datetime(skipped["timestamp"], errors="coerce")
+        for ts in sorted({ts for ts in skipped_dates.dropna()}):
+            events.append(EventBand(label="NO RUN", start=ts - half_window, end=ts + half_window))
+
+    return events
+
+
 def _generate_event_bands(all_actual: pd.DataFrame, forecast_df: pd.DataFrame, item_id: str):
     promo_col = "promo_flag"
 
@@ -1284,10 +1467,29 @@ def _estimate_risk_peak(forecast_df: pd.DataFrame, item_id: str) -> str:
     return ts.strftime("%Y-%m-%d")
 
 
-def _build_insight_text(*, item_id: str, mape: float, coverage: float, peak_date: str) -> str:
-    mape_display = "n/d" if math.isnan(mape) else f"{mape:.1f}%"
+def _build_insight_text(
+    *,
+    item_id: str,
+    metric_value: float,
+    metric_label: str,
+    coverage: float,
+    peak_date: str,
+) -> str:
+    label_upper = metric_label.upper()
+    if math.isnan(metric_value):
+        metric_display = "n/d"
+    elif "MAPE" in label_upper:
+        metric_display = f"{metric_value:.1f}%"
+    elif "MAE" in label_upper:
+        metric_display = f"{metric_value:,.0f}"
+    else:
+        metric_display = f"{metric_value:.2f}"
+
     coverage_display = "n/d" if math.isnan(coverage) else f"{coverage:.1f}%"
-    return f"Per {item_id}, MAPE={mape_display}, coverage={coverage_display}. Picco rischio cassa: {peak_date}."
+    return (
+        f"Per {item_id}, {metric_label}={metric_display}, coverage={coverage_display}. "
+        f"Picco rischio cassa: {peak_date}."
+    )
 
 
 def _maybe_launch_streamlit() -> None:
