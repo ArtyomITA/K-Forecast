@@ -458,6 +458,27 @@ def render_main_area(options: dict[str, Any]) -> None:
             st.markdown(f"**Tabelle SAP**: {hero_copy['sap']}")
             st.markdown(f"**Campi principali**: {hero_copy['fields']}")
 
+    registry_entry = DATASET_REGISTRY.get(options["model_key"], {})
+    expected_cols = registry_entry.get("expected")
+    if expected_cols:
+        aliases = COLUMN_ALIASES.get(options["model_key"], {})
+        expected_alias = [str(aliases.get(col, col)) for col in expected_cols]
+        found_alias = [str(aliases.get(col, col)) for col in dataset_df.columns]
+        missing_alias = [alias for alias in expected_alias if alias not in found_alias]
+
+        missing_display = (
+            ", ".join(f"**{alias}**" for alias in missing_alias)
+            if missing_alias
+            else "nessuna"
+        )
+        st.info(
+            "**Colonne attese:** {expected} | **Trovate:** {found} | **Mancanti:** {missing}".format(
+                expected=", ".join(expected_alias),
+                found=", ".join(sorted(set(found_alias))),
+                missing=missing_display,
+            )
+        )
+
     usecase = USECASE_COPY.get(options["model_key"], {})
     title = usecase.get("title", "Use case")
     bullets = usecase.get("bullets", [])
@@ -881,6 +902,7 @@ def _render_outputs(
     sap_note: str | None = None
     if is_sd:
         _render_sd_use_case_panel(source_df)
+        sap_note = "Tabelle SAP: VBRK/VBRP, VBAK/VBAP, KONV · KNA1/KNVV, MARA/MARC"
     elif is_f110:
         _render_f110_use_case_panel(source_df)
         sap_note = "Tabelle SAP: BSIK/BSAK, BSEG (ZFBDT,ZTERM,NETDT) · BKPF, T001"

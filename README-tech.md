@@ -86,7 +86,8 @@ K-Forecast/
 ### Componenti chiave
 
 - `app.py`: orchestrazione UI, gestione stato, cache sessione, validazione
-  dataset, routing verso i modelli.
+  dataset, routing verso i modelli. Contiene i blocchi `USECASE_HERO` (scope,
+  tabelle SAP, campi chiave) e il riquadro di validazione schema con alias GUI.
 - `assets/app.css`: stylesheet brandizzato (novità: l'iniezione inline è stata
   rimossa in favore di questo file esterno, caricato con placeholder sostituiti
   a runtime).
@@ -130,6 +131,10 @@ reference per scenari legacy Chronos.
   dataset, frequenza o orizzonte.
 - I grafici mostrano bande evento tramite `utils.viz.EventBand` (promo o altri
   eventi di business).
+- Il sottotitolo “Tabelle SAP …” è inserito via parametro `sap_note` nei grafici
+  (`build_forecast_chart`, `build_step_run_chart`, `build_count_bar_chart`).
+- La preview dataset sfrutta `COLUMN_ALIASES` per rinominare le colonne, mentre
+  `build_column_dictionary()` genera una tabella GUI→colonna tecnica.
 
 ## Logging e diagnostica
 

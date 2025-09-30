@@ -14,9 +14,14 @@ con l'identità Keytech.
 - **Tre motori mirati**: DeepAR (F110) per i run di pagamento, DeepAR (SD) per
   la domanda commerciale SKU×Cliente e ARIMA/SARIMA (EBS) per il workload di
   riconciliazione bancaria.
+- **Hero informativo immediato**: sopra al bottone “Esegui Forecast” trovi
+  scope, tabelle SAP e campi principali del modello selezionato, così da
+  contestualizzare subito la vista.
 - **Focus su business KPI**: KPI di accuratezza tradotti in metri di sala
   (MAPE run-day, MAE per il workload, coverage p10–p90) con tooltip che li
   riportano al contesto SAP.
+- **Validazione schema leggibile**: il riquadro “Colonne attese/Trovate” usa
+  gli alias GUI e mette in evidenza (in grassetto) le eventuali mancanze.
 - **Esperienza brandizzata**: layout dark in linea con il brand Keytech (tema
   separato in `assets/app.css`).
 - **Accesso guidato**: percorso in tre step “Seleziona dataset → Scegli modello
@@ -30,6 +35,8 @@ con l'identità Keytech.
    callout sugli eventi (promo, run programmati) e pulsanti di export.
 3. **Tab "Confronto Modelli"** – confronta gli ultimi run per misurare gap fra
    approcci, con badge che evidenziano il best performer.
+4. **Dizionario campi GUI→SAP** – ogni dataset espone una preview aliasata e una
+  tabella di corrispondenza per facilitare il dialogo con i team funzionali.
 
 ## Use case da mostrare in demo
 
@@ -58,6 +65,9 @@ e covariate necessarie) e possono essere rigenerati con `python scripts/<nome_sc
 - **SD** → anagrafiche da VBAK/VBAP, condizioni di prezzo da KONV, calendario promo da
   tavole di customizing
 - **EBS** → FEBKO/FEBEP con ribaltamento giornaliero degli statement
+
+Ogni grafico riporta lo stesso elenco come sottotitolo (“Tabelle SAP …”) per
+ricordare la provenienza dei dati anche nelle esportazioni PNG.
 
 ## Esperienza attesa in sala
 

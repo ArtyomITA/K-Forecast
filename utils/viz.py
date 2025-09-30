@@ -35,7 +35,7 @@ def build_count_bar_chart(
     *,
     item_id: str,
     events: Sequence[EventBand] | None = None,
-    bar_name: str = "Righe FEBEP",
+    bar_name: str = "Righe EBS/giorno",
     freq: str | None = "D",
     sap_note: str | None = None,
 ) -> go.Figure:
@@ -89,7 +89,7 @@ def build_count_bar_chart(
                 fillcolor=_hex_to_rgba(KT_ORANGE, 0.20),
                 line=dict(width=0, color="rgba(0,0,0,0)"),
                 name="Banda p10–p90",
-                hovertemplate="%{x|%Y-%m-%d}: %{y:,}<extra></extra>",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,} righe<extra></extra>",
             )
         )
         fig.add_trace(
@@ -124,7 +124,7 @@ def build_count_bar_chart(
                 ),
             )
 
-    y_axis_title = "Conteggi giornalieri"
+    y_axis_title = "Righe EBS/giorno"
     fig.update_layout(
         title=f"EBS workload · {item_id}",
         xaxis_title="Data",
@@ -141,7 +141,7 @@ def build_count_bar_chart(
             xref="paper",
             yref="paper",
             x=0,
-            y=1.15,
+            y=1.12,
             showarrow=False,
             font=dict(size=11, color=KT_TEXT_MUTED),
         )
@@ -188,6 +188,7 @@ def build_forecast_chart(
                 name="Actual",
                 line=dict(color=KT_SUCCESS, width=2.5),
                 marker=dict(size=5, color=KT_SUCCESS),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,.2f} €<extra></extra>",
             )
         )
 
@@ -199,6 +200,7 @@ def build_forecast_chart(
                 mode="lines",
                 name="Forecast p50",
                 line=dict(color=KT_ORANGE, width=3),
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,.2f} €<extra></extra>",
             )
         )
         fig.add_trace(
@@ -220,7 +222,7 @@ def build_forecast_chart(
                 fillcolor=_hex_to_rgba(KT_ORANGE, 0.18),
                 line=dict(width=0, color="rgba(0,0,0,0)"),
                 name="Intervallo p10-p90",
-                hovertemplate="%{x|%Y-%m-%d}: %{y:.2f}<extra></extra>",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:,.2f} €<extra></extra>",
             )
         )
 
@@ -247,7 +249,7 @@ def build_forecast_chart(
     fig.update_layout(
         title=f"Forecast vs Actual · {item_id}",
         xaxis_title="Data",
-        yaxis_title="Valore",
+    yaxis_title="Vendite (€)",
         template=PLOTLY_TEMPLATE,
         hovermode="x unified",
         legend=dict(
@@ -266,7 +268,7 @@ def build_forecast_chart(
             xref="paper",
             yref="paper",
             x=0,
-            y=1.15,
+            y=1.12,
             showarrow=False,
             font=dict(size=11, color=KT_TEXT_MUTED),
         )
@@ -429,7 +431,7 @@ def build_step_run_chart(
             fillcolor=_hex_to_rgba(KT_ORANGE, 0.18),
             line=dict(width=0),
             name="Banda p10-p90",
-            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
+            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f} €<extra></extra>",
             line_shape="hv",
         )
 
@@ -441,7 +443,7 @@ def build_step_run_chart(
             name="Forecast p50",
             line=dict(color=KT_ORANGE, width=3),
             marker=dict(size=8, color=KT_ORANGE, symbol="square"),
-            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
+            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f} €<extra></extra>",
             line_shape="hv",
         )
 
@@ -452,7 +454,7 @@ def build_step_run_chart(
             mode="markers",
             name="Pagamenti",
             marker=dict(size=10, color=KT_SUCCESS, symbol="circle", line=dict(width=1, color="white")),
-            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f}€<extra></extra>",
+            hovertemplate="%{x|%Y-%m-%d}: %{y:,.0f} €<extra></extra>",
         )
 
     if events:
@@ -478,7 +480,7 @@ def build_step_run_chart(
     fig.update_layout(
         title=f"F110 payout runs · {item_id}",
         xaxis_title="Data di run",
-        yaxis_title="€ pagati",
+    yaxis_title="€ pagati nel run",
         template=PLOTLY_TEMPLATE,
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
@@ -490,7 +492,7 @@ def build_step_run_chart(
             xref="paper",
             yref="paper",
             x=0,
-            y=1.15,
+            y=1.12,
             showarrow=False,
             font=dict(size=11, color=KT_TEXT_MUTED),
         )
