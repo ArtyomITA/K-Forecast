@@ -1,5 +1,7 @@
 # K-Forecast
 
+Di **Adrian Ciprian Iancu** · [GitHub](https://github.com/ArtyomITA) · [Hugging Face](https://huggingface.co/adriandj3) · [LinkedIn](https://www.linkedin.com/in/adrian-ciprian-iancu-a2a477391) · [sito](https://artyomita.github.io/)
+
 K-Forecast è il cruscotto che mette in mano ai soci una vista unica sulle
 previsioni operative AP/AR e sul carico dei team di tesoreria. Una singola
 interfaccia, tre motori previsivi specializzati e un linguaggio visivo in linea
@@ -18,7 +20,7 @@ con l'identità Keytech.
   scope, tabelle SAP e campi principali del modello selezionato, così da
   contestualizzare subito la vista.
 - **Focus su business KPI**: KPI di accuratezza tradotti in metri di sala
-  (MAPE run-day, MAE per il workload, coverage p10–p90) con tooltip che li
+  (MAPE run-day, MAE per il workload, coverage p10-p90) con tooltip che li
   riportano al contesto SAP.
 - **Validazione schema leggibile**: il riquadro “Colonne attese/Trovate” usa
   gli alias GUI e mette in evidenza (in grassetto) le eventuali mancanze.
@@ -29,13 +31,13 @@ con l'identità Keytech.
 
 ## Come leggere il menu
 
-1. **Sidebar** – selezione del motore, orizzonte (7/30/90 giorni) e origine
+1. **Sidebar**, selezione del motore, orizzonte (7/30/90 giorni) e origine
    dati (mock dedicato, mock alternativo o upload proprietario).
-2. **Vista principale** – grafico interattivo con intervalli di confidenza,
+2. **Vista principale**, grafico interattivo con intervalli di confidenza,
    callout sugli eventi (promo, run programmati) e pulsanti di export.
-3. **Tab "Confronto Modelli"** – confronta gli ultimi run per misurare gap fra
+3. **Tab "Confronto Modelli"**, confronta gli ultimi run per misurare gap fra
    approcci, con badge che evidenziano il best performer.
-4. **Dizionario campi GUI→SAP** – ogni dataset espone una preview aliasata e una
+4. **Dizionario campi GUI→SAP**, ogni dataset espone una preview aliasata e una
   tabella di corrispondenza per facilitare il dialogo con i team funzionali.
 
 ## Use case da mostrare in demo
@@ -74,7 +76,7 @@ ricordare la provenienza dei dati anche nelle esportazioni PNG.
 - I grafici reagiscono in tempo reale al cambio modello e mantengono la storia
   nella tab di confronto.
 - Le metriche principali mostrano MAPE run-day o MAE a seconda del modello e la
-  coverage p10–p90.
+  coverage p10-p90.
 - Il pulsante "Scarica previsioni" abilita l'approfondimento offline.
 
 ## Come organizzare la prova live
